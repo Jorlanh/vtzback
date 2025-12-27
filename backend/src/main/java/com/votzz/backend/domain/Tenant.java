@@ -32,6 +32,11 @@ public class Tenant { // REMOVIDO: extends BaseEntity
     @JoinColumn(name = "plano_id")
     private Plano plano;
 
+    // --- Vinculação com Afiliado (Novo) ---
+    @ManyToOne
+    @JoinColumn(name = "afiliado_id")
+    private Afiliado afiliado;
+
     @Column(name = "asaas_customer_id")
     private String asaasCustomerId;
 

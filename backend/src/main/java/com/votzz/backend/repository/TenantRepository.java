@@ -2,7 +2,6 @@ package com.votzz.backend.repository;
 
 import com.votzz.backend.domain.Tenant;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -16,4 +15,7 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
 
     // Busca condomínios ativos para cálculo de MRR
     List<Tenant> findByAtivoTrue();
+
+    // Novo método para o Webhook (Necessário para identificar quem pagou)
+    Tenant findByAsaasCustomerId(String asaasCustomerId);
 }

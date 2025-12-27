@@ -8,19 +8,20 @@ import org.springframework.web.client.RestClient;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap; // Import necessário para o Map mutável
 import java.util.List;
 import java.util.Map;
 
 @Component
 public class AsaasClient {
 
-    @Value("${asaas.api.url}") // Defina https://sandbox.asaas.com/api/v3 no properties
+    @Value("${asaas.api.url}")
     private String apiUrl;
 
-    @Value("${asaas.api.key}") // Defina sua chave $aact... no properties
+    @Value("${asaas.api.key}")
     private String apiKey;
 
-    @Value("${asaas.wallet.master-id}") // ID da sua carteira principal no Asaas
+    @Value("${asaas.wallet.master-id}")
     private String masterWalletId;
 
     private final RestClient restClient;
@@ -33,29 +34,31 @@ public class AsaasClient {
      * Cria uma cobrança real com Split no Asaas.
      */
     public String criarCobrancaSplit(String customerId, BigDecimal valorTotal, String walletCondominio, BigDecimal taxaVotzz) {
-        // Cálculo: O Condomínio recebe (Total - Taxa), o Votzz recebe a Taxa
-        BigDecimal valorLiquidoCondominio = valorTotal.subtract(taxaVotzz);
+        Map<String, Object> body = new HashMap<>();
+        body.put("customer", customerId);
+        body.put("billingType", "PIX");
+        body.put("value", valorTotal);
+        body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
+        body.put("description", "Reserva de Área Comum - Votzz SaaS");
 
-        // Configuração do Split real
-        var splitConfig = List.of(
-            Map.of(
-                "walletId", walletCondominio,
-                "fixedValue", valorLiquidoCondominio
-            ),
-            Map.of(
-                "walletId", masterWalletId,
-                "fixedValue", taxaVotzz
-            )
-        );
-
-        var body = Map.of(
-            "customer", customerId,
-            "billingType", "PIX",
-            "value", valorTotal,
-            "dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE),
-            "split", splitConfig,
-            "description", "Reserva de Área Comum - Votzz SaaS"
-        );
+        // LÓGICA DE SPLIT CONDICIONAL
+        if (taxaVotzz.compareTo(BigDecimal.ZERO) > 0) {
+            // Cenário Trimestral: Divide o valor (Condomínio recebe líquido, Votzz recebe taxa)
+            BigDecimal valorLiquidoCondominio = valorTotal.subtract(taxaVotzz);
+            
+            var splitConfig = List.of(
+                Map.of("walletId", walletCondominio, "fixedValue", valorLiquidoCondominio),
+                Map.of("walletId", masterWalletId, "fixedValue", taxaVotzz)
+            );
+            body.put("split", splitConfig);
+        } else {
+            // Cenário Anual (Isento de taxa Votzz): 
+            // Manda 100% para o condomínio. O Asaas cobra a tarifa bancária deles automaticamente.
+            var splitConfig = List.of(
+                Map.of("walletId", walletCondominio, "percentualValue", 100)
+            );
+            body.put("split", splitConfig);
+        }
 
         try {
             Map response = restClient.post()
@@ -84,7 +87,7 @@ public class AsaasClient {
             "operationType", "PIX",
             "pixAddressKey", chavePix,
             "description", "Pagamento de Comissão Votzz",
-            "scheduleDate", LocalDate.now().toString() // Paga hoje
+            "scheduleDate", LocalDate.now().toString()
         );
 
         try {
@@ -98,7 +101,6 @@ public class AsaasClient {
 
             return (String) response.get("id");
         } catch (Exception e) {
-            // Em produção, deve-se tratar erros como "Saldo Insuficiente"
             throw new RuntimeException("Erro na transferência PIX: " + e.getMessage());
         }
     }
