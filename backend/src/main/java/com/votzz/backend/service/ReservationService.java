@@ -3,9 +3,10 @@ package com.votzz.backend.service;
 import com.votzz.backend.domain.Booking;
 import com.votzz.backend.domain.Plano;
 import com.votzz.backend.domain.Tenant;
-import com.votzz.backend.integration.AsaasClient; // Importar o client do pacote integration
+import com.votzz.backend.dto.BookingRequest.CreditCardDTO; // Import do DTO
+import com.votzz.backend.integration.AsaasClient;
 import com.votzz.backend.repository.BookingRepository;
-import com.votzz.backend.repository.TenantRepository; // Import corrigido
+import com.votzz.backend.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -20,30 +21,38 @@ public class ReservationService {
     private final BookingRepository bookingRepository;
     private final AsaasClient asaasClient;
 
-    public Booking criarReserva(UUID tenantId, Booking reserva, String payerAsaasId) {
+    // Assinatura atualizada para receber dados de pagamento
+    public Booking criarReserva(
+            UUID tenantId, 
+            Booking reserva, 
+            String payerAsaasId,
+            String billingType, 
+            CreditCardDTO cardData
+    ) {
         Tenant tenant = tenantRepository.findById(tenantId)
             .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
             
         BigDecimal taxaVotzz = BigDecimal.ZERO;
         
-        // Verifica se o tenant tem plano e se é trimestral para cobrar taxa
+        // Verifica se cobra taxa (Plano Trimestral)
         if (tenant.getPlano() != null && tenant.getPlano().getCiclo() == Plano.Ciclo.TRIMESTRAL) {
              taxaVotzz = tenant.getPlano().getTaxaServicoReserva();
         }
         
-        // CORREÇÃO DOS ARGUMENTOS:
-        // Ordem esperada no AsaasClient: (payerId, valorTotal, walletCondominio, taxaVotzz)
+        // CORREÇÃO: Passando novos parâmetros (billingType, cardData e o User dono da reserva)
         String paymentId = asaasClient.criarCobrancaSplit(
-            payerAsaasId,                 // 1. Quem paga (Morador)
-            reserva.getTotalPrice(),      // 2. Valor Total
-            tenant.getAsaasWalletId(),    // 3. Carteira do Condomínio
-            taxaVotzz                     // 4. Taxa do Votzz
+            payerAsaasId,                 
+            reserva.getTotalPrice(),      
+            tenant.getAsaasWalletId(),    
+            taxaVotzz,
+            billingType,                  // PIX, CREDIT_CARD...
+            cardData,                     // Dados do cartão
+            reserva.getUser()             // Dados do morador para antifraude
         );
         
-        // Agora funciona porque atualizamos a entidade Booking no passo 2
         reserva.setAsaasPaymentId(paymentId);
         reserva.setStatus("PENDENTE");
-        reserva.setTenant(tenant); // Importante vincular o tenant
+        reserva.setTenant(tenant); 
         
         return bookingRepository.save(reserva);
     }
