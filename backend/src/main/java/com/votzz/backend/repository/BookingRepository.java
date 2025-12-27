@@ -1,0 +1,24 @@
+package com.votzz.backend.repository;
+
+import com.votzz.backend.domain.Booking;
+import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
+import org.springframework.stereotype.Repository;
+
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
+
+@Repository
+public interface BookingRepository extends JpaRepository<Booking, UUID> {
+
+    // --- CORREÇÃO AQUI ---
+    // Antes: b.areaId = :areaId
+    // Agora: b.commonArea.id = :areaId
+    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status <> 'CANCELLED'")
+    List<Booking> findActiveBookingsByAreaAndDate(@Param("areaId") UUID areaId, @Param("date") LocalDate date);
+
+    // Se tiver outras queries usando areaId, corrija também:
+    // List<Booking> findByCommonAreaId(UUID areaId); // O Spring Data entende isso automaticamente
+}
