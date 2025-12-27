@@ -9,7 +9,7 @@ import java.util.UUID;
 @Data
 @Entity
 @Table(name = "tenants")
-public class Tenant { // REMOVIDO: extends BaseEntity
+public class Tenant { 
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -32,7 +32,7 @@ public class Tenant { // REMOVIDO: extends BaseEntity
     @JoinColumn(name = "plano_id")
     private Plano plano;
 
-    // --- Vinculação com Afiliado (Novo) ---
+    // --- Vinculação com Afiliado ---
     @ManyToOne
     @JoinColumn(name = "afiliado_id")
     private Afiliado afiliado;
@@ -48,6 +48,10 @@ public class Tenant { // REMOVIDO: extends BaseEntity
 
     @Column(name = "data_expiracao_plano")
     private LocalDate dataExpiracaoPlano;
+
+    // --- NOVO CAMPO DE SEGURANÇA (O erro estava aqui: faltava declarar isso) ---
+    @Column(name = "secret_keyword")
+    private String secretKeyword;
 
     @PrePersist
     protected void onCreate() {
