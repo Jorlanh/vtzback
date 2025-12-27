@@ -8,6 +8,7 @@ import com.votzz.backend.repository.TenantRepository;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value; // Importante
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -23,10 +24,18 @@ public class WebhookController {
     private final TenantRepository tenantRepository;
     private final ComissaoRepository comissaoRepository;
 
+    @Value("${asaas.webhook.token}") // Adicione isso no application.properties
+    private String webhookSecretToken;
+
     @PostMapping("/asaas")
     public ResponseEntity<String> handleAsaasWebhook(@RequestBody AsaasWebhookEvent event, 
                                                      @RequestHeader(value = "asaas-access-token", required = false) String token) {
-        // TODO: Validar o token de segurança do webhook do Asaas aqui
+        
+        // 1. VALIDAÇÃO DE SEGURANÇA (O que faltava)
+        if (token == null || !token.equals(webhookSecretToken)) {
+            log.warn("Tentativa de webhook com token inválido: {}", token);
+            return ResponseEntity.status(401).body("Acesso Negado");
+        }
 
         if ("PAYMENT_RECEIVED".equals(event.event)) {
             processarPagamentoConfirmado(event.payment);

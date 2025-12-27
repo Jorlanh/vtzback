@@ -1,6 +1,7 @@
 package com.votzz.backend.config;
 
 import com.votzz.backend.config.security.TenantSecurityFilter;
+import org.springframework.beans.factory.annotation.Value; // Importante
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -20,6 +21,9 @@ import java.util.List;
 public class SecurityConfig {
 
     private final TenantSecurityFilter tenantSecurityFilter;
+
+    @Value("${cors.allowed.origins}") // Defina isso no properties como lista separada por vírgula
+    private List<String> allowedOrigins; 
 
     public SecurityConfig(TenantSecurityFilter tenantSecurityFilter) {
         this.tenantSecurityFilter = tenantSecurityFilter;
@@ -64,9 +68,12 @@ public class SecurityConfig {
     @Bean
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(List.of("http://localhost:5173", "http://localhost:3000"));
+        
+        // Em Dev use localhost, em Prod use a URL real configurada no properties
+        config.setAllowedOrigins(allowedOrigins != null ? allowedOrigins : List.of("*")); 
+        
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")); 
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User"));
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token")); // Adicionado asaas-access-token
         config.setAllowCredentials(true);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
