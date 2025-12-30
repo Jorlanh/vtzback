@@ -33,7 +33,6 @@ public class FacilitiesController {
     @GetMapping("/areas")
     public List<CommonArea> getAreas() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        // Se o usuário não tiver tenant (ex: admin global), retorna lista vazia ou trata erro
         if (user.getTenant() == null) return List.of();
         return areaRepository.findByTenantId(user.getTenant().getId());
     }
@@ -43,7 +42,6 @@ public class FacilitiesController {
     public ResponseEntity<?> createArea(@RequestBody CommonArea area) {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         
-        // [CORREÇÃO] Usei ADM_CONDO que é o nome correto no seu banco
         if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADM_CONDO) {
             return ResponseEntity.status(403).body("Apenas síndicos ou administradores podem criar áreas.");
         }
@@ -79,7 +77,7 @@ public class FacilitiesController {
     public List<Booking> getBookings() {
         User user = (User) SecurityContextHolder.getContext().getAuthentication().getPrincipal();
         
-        // [CORREÇÃO] Verificação de Role correta
+        // Se for gestão, vê todas do condomínio. Se for morador, vê só as suas.
         if (user.getRole() == Role.SINDICO || user.getRole() == Role.ADM_CONDO) {
             return bookingRepository.findAllByTenantId(user.getTenant().getId());
         } else {
@@ -127,7 +125,7 @@ public class FacilitiesController {
         String cobrancaId = null;
         BigDecimal preco = area.getPrice();
         
-        if (preco.compareTo(BigDecimal.ZERO) > 0) {
+        if (preco != null && preco.compareTo(BigDecimal.ZERO) > 0) {
             try {
                 BigDecimal taxaServico = new BigDecimal("0.00"); 
                 
@@ -160,7 +158,6 @@ public class FacilitiesController {
         booking.setCpf(request.cpf());
         booking.setBloco(request.bloco());
         booking.setUnidade(request.unidade());
-        // [CORREÇÃO] Garantindo que o campo 'unit' também seja preenchido se existir
         booking.setUnit(request.unidade()); 
 
         booking.setBookingDate(dataReserva);
@@ -171,11 +168,21 @@ public class FacilitiesController {
         booking.setBillingType(request.billingType());
         
         // Status inicial
-        booking.setStatus(preco.compareTo(BigDecimal.ZERO) == 0 ? "APPROVED" : "PENDING");
+        boolean isFree = preco == null || preco.compareTo(BigDecimal.ZERO) == 0;
+        booking.setStatus(isFree ? "APPROVED" : "PENDING");
 
         bookingRepository.save(booking);
 
         return ResponseEntity.ok(Map.of("message", "Reserva criada!", "bookingId", booking.getId()));
+    }
+
+    // [ADICIONADO] Funcionalidade que estava no BookingController
+    @PatchMapping("/bookings/{id}/status")
+    public ResponseEntity<Booking> updateBookingStatus(@PathVariable UUID id, @RequestBody String status) {
+        return bookingRepository.findById(id).map(booking -> {
+            booking.setStatus(status.replace("\"", ""));
+            return ResponseEntity.ok(bookingRepository.save(booking));
+        }).orElse(ResponseEntity.notFound().build());
     }
 
     public record BookingRequest(
