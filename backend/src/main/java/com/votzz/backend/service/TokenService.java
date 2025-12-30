@@ -24,6 +24,7 @@ public class TokenService {
     @Value("${jwt.expiration}")
     private Long expiration; // Ex: 86400000 para 24h
 
+   // --- GERAÇÃO DO TOKEN ---
     public String generateToken(User user) {
         Map<String, Object> claims = new HashMap<>();
         claims.put("role", user.getRole());
@@ -32,6 +33,7 @@ public class TokenService {
             claims.put("tenantId", user.getTenant().getId());
         }
 
+        // Usamos o Email como Subject (identificador principal)
         return createToken(claims, user.getEmail());
     }
 
@@ -49,6 +51,22 @@ public class TokenService {
         return Keys.hmacShaKeyFor(secret.getBytes());
     }
 
+    // --- VALIDAÇÃO (Adaptado para o SecurityFilter) ---
+    
+    // Este método é chamado pelo SecurityFilter. 
+    // Ele tenta ler o token. Se conseguir, retorna o Email (Subject). Se der erro (expirado/inválido), retorna vazio.
+    public String validateToken(String token) {
+        try {
+            return extractUsername(token);
+        } catch (Exception e) {
+            // Se o token estiver expirado ou assinatura inválida, o parser lança exceção.
+            // Retornamos vazio para indicar que a validação falhou.
+            return "";
+        }
+    }
+
+    // --- MÉTODOS AUXILIARES ---
+
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);
     }
@@ -64,18 +82,5 @@ public class TokenService {
                 .build()
                 .parseClaimsJws(token)
                 .getBody();
-    }
-
-    public boolean validateToken(String token, String userEmail) {
-        final String username = extractUsername(token);
-        return (username.equals(userEmail) && !isTokenExpired(token));
-    }
-
-    private boolean isTokenExpired(String token) {
-        return extractExpiration(token).before(new Date());
-    }
-
-    private Date extractExpiration(String token) {
-        return extractClaim(token, Claims::getExpiration);
     }
 }

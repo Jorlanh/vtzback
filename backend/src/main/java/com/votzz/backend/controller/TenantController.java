@@ -1,8 +1,8 @@
 package com.votzz.backend.controller;
 
-import com.votzz.backend.domain.Role;
 import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
+import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.repository.TenantRepository;
 import com.votzz.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;

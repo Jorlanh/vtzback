@@ -1,7 +1,5 @@
 package com.votzz.backend.integration;
 
-import com.votzz.backend.domain.User; // Importante para o Holder Info
-import com.votzz.backend.dto.BookingRequest.CreditCardDTO;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
@@ -33,51 +31,23 @@ public class AsaasClient {
     }
 
     /**
-     * Cria cobrança com Split suportando PIX, BOLETO e CARTÕES.
+     * Cria cobrança com Split suportando apenas PIX e BOLETO.
      */
     public String criarCobrancaSplit(
             String customerId, 
             BigDecimal valorTotal, 
             String walletCondominio, 
             BigDecimal taxaVotzz,
-            String billingType,       // Novo: PIX, CREDIT_CARD, etc
-            CreditCardDTO cardData,   // Novo: Dados do cartão
-            User holderInfo           // Novo: Dados do dono do cartão (User)
+            String billingType // PIX ou BOLETO
     ) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
-        body.put("billingType", billingType != null ? billingType : "PIX"); // Default PIX
+        body.put("billingType", billingType != null ? billingType : "PIX");
         body.put("value", valorTotal);
         body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
         body.put("description", "Reserva de Área Comum - Votzz SaaS");
 
-        // --- LÓGICA DE CARTÃO DE CRÉDITO/DÉBITO ---
-        if ("CREDIT_CARD".equals(billingType) || "DEBIT_CARD".equals(billingType)) {
-            if (cardData == null || holderInfo == null) {
-                throw new RuntimeException("Dados do cartão ou titular ausentes para pagamento via cartão.");
-            }
-
-            // 1. Dados do Cartão
-            body.put("creditCard", Map.of(
-                "holderName", cardData.holderName(),
-                "number", cardData.number(),
-                "expiryMonth", cardData.expiryMonth(),
-                "expiryYear", cardData.expiryYear(),
-                "ccv", cardData.ccv()
-            ));
-
-            // 2. Dados do Titular (Obrigatório para antifraude)
-            body.put("creditCardHolderInfo", Map.of(
-                "name", holderInfo.getNome(),
-                "email", holderInfo.getEmail(),
-                "cpfCnpj", holderInfo.getCpf(),
-                "postalCode", "00000-000", // Idealmente viria do User
-                "addressNumber", "0",
-                "phone", holderInfo.getWhatsapp() != null ? holderInfo.getWhatsapp() : "00000000000"
-            ));
-        }
-
-        // --- LÓGICA DE SPLIT (Mantida e Corrigida) ---
+        // --- LÓGICA DE SPLIT ---
         if (taxaVotzz.compareTo(BigDecimal.ZERO) > 0) {
             BigDecimal valorLiquidoCondominio = valorTotal.subtract(taxaVotzz);
             var splitConfig = List.of(
@@ -111,12 +81,28 @@ public class AsaasClient {
     }
 
     public String transferirPix(String chavePix, BigDecimal valor) {
-        // ... (código existente de transferência mantido igual) ...
         var body = Map.of(
             "value", valor, "operationType", "PIX", "pixAddressKey", chavePix,
             "description", "Comissão Votzz", "scheduleDate", LocalDate.now().toString()
         );
-        // ... chamada restClient ...
-        return "transfer_id_placeholder"; // Simplificado para brevidade
+        
+        try {
+            Map response = restClient.post()
+                .uri(apiUrl + "/transfers")
+                .header("access_token", apiKey)
+                .contentType(MediaType.APPLICATION_JSON)
+                .body(body)
+                .retrieve()
+                .body(Map.class);
+                
+            if (response != null && response.containsKey("id")) {
+                return (String) response.get("id");
+            }
+            return null;
+        } catch (Exception e) {
+            // Logar erro mas não quebrar fluxo principal se possível
+            System.err.println("Erro na transferência PIX: " + e.getMessage());
+            return null;
+        }
     }
 }

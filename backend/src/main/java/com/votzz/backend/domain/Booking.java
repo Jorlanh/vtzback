@@ -12,26 +12,27 @@ import java.time.LocalDate;
 @EqualsAndHashCode(callSuper = true)
 public class Booking extends BaseEntity {
 
-    // Tenant (read-only)
     @ManyToOne
     @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
     private Tenant tenant;
 
-    // CORRETO: Mapeando 'area_id' para o objeto CommonArea
     @ManyToOne
     @JoinColumn(name = "area_id") 
     private CommonArea commonArea;
-
-    // Se houver algum campo antigo como este abaixo, APAGUE-O:
-    // @Column(name = "area_comum")
-    // private String areaComum;
 
     @ManyToOne
     @JoinColumn(name = "user_id")
     private User user;
 
-    private String unit;
+    // --- Dados do Morador (Snapshot) ---
+    private String nome;
+    private String cpf;
+    private String unidade; // Este é o campo que o 'setUnit' do controller procura?
+    private String bloco;
     
+    // Se o seu código anterior usava "unit" em inglês, mantenha este campo também para compatibilidade:
+    private String unit; 
+
     @Column(name = "booking_date")
     private LocalDate bookingDate;
     
@@ -41,11 +42,19 @@ public class Booking extends BaseEntity {
     @Column(name = "end_time")
     private String endTime;
     
-    private String status; 
+    private String status; // PENDING, APPROVED, REJECTED, CANCELLED
 
     @Column(name = "total_price")
     private BigDecimal totalPrice;
 
     @Column(name = "asaas_payment_id")
     private String asaasPaymentId;
+    
+    @Column(name = "billing_type")
+    private String billingType; // PIX, BOLETO
+
+    @PrePersist
+    public void prePersist() {
+        if (this.status == null) this.status = "PENDING";
+    }
 }

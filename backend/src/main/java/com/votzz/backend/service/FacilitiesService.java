@@ -6,7 +6,7 @@ import com.votzz.backend.domain.User;
 import com.votzz.backend.dto.BookingRequest;
 import com.votzz.backend.repository.BookingRepository;
 import com.votzz.backend.repository.CommonAreaRepository;
-import com.votzz.backend.repository.UserRepository; // Import novo
+import com.votzz.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -21,7 +21,7 @@ public class FacilitiesService {
 
     private final BookingRepository bookingRepository;
     private final CommonAreaRepository areaRepository;
-    private final UserRepository userRepository; // Injeção necessária
+    private final UserRepository userRepository;
 
     @Transactional
     public Booking createBooking(BookingRequest req) {
@@ -38,7 +38,6 @@ public class FacilitiesService {
         boolean hasConflict = existing.stream().anyMatch(b -> {
             LocalTime bStart = LocalTime.parse(b.getStartTime());
             LocalTime bEnd = LocalTime.parse(b.getEndTime());
-            // Lógica de intersecção de horários
             return newStart.isBefore(bEnd) && newEnd.isAfter(bStart);
         });
 
@@ -46,7 +45,7 @@ public class FacilitiesService {
             throw new RuntimeException("Horário indisponível. Conflito com outra reserva.");
         }
 
-        // 2. Buscar Entidades Reais (JPA exige a entidade, não só o ID)
+        // 2. Buscar Entidades Reais
         CommonArea area = areaRepository.findById(areaUuid)
                 .orElseThrow(() -> new RuntimeException("Área comum não encontrada"));
 
@@ -56,9 +55,8 @@ public class FacilitiesService {
         // 3. Montar Objeto Booking
         Booking booking = new Booking();
         
-        // CORREÇÃO: Usar os métodos que aceitam a Entidade
-        booking.setCommonArea(area); // Antes estava setAreaId
-        booking.setUser(user);       // Antes estava setUserId
+        booking.setCommonArea(area);
+        booking.setUser(user);
         
         booking.setUnit(req.unit());
         booking.setBookingDate(req.date());
@@ -66,7 +64,7 @@ public class FacilitiesService {
         booking.setEndTime(req.endTime());
         booking.setTotalPrice(area.getPrice());
         
-        // Define status
+        // Define status inicial
         boolean needsApproval = Boolean.TRUE.equals(area.getRequiresApproval());
         booking.setStatus(needsApproval ? "PENDING" : "APPROVED");
         

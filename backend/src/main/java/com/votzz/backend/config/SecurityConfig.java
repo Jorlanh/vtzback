@@ -1,10 +1,9 @@
 package com.votzz.backend.config;
 
-import com.votzz.backend.config.security.TenantSecurityFilter;
+import com.votzz.backend.config.security.SecurityFilter; // Import correto
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.http.HttpMethod;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.config.annotation.authentication.configuration.AuthenticationConfiguration;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
@@ -24,13 +23,15 @@ import java.util.List;
 @EnableWebSecurity
 public class SecurityConfig {
 
-    private final TenantSecurityFilter tenantSecurityFilter;
+    // [CORREÇÃO] Mudou de TenantSecurityFilter para SecurityFilter
+    private final SecurityFilter securityFilter;
 
     @Value("${cors.allowed.origins}")
     private List<String> allowedOrigins; 
 
-    public SecurityConfig(TenantSecurityFilter tenantSecurityFilter) {
-        this.tenantSecurityFilter = tenantSecurityFilter;
+    // [CORREÇÃO] Injeção do novo filtro
+    public SecurityConfig(SecurityFilter securityFilter) {
+        this.securityFilter = securityFilter;
     }
 
     @Bean
@@ -38,7 +39,6 @@ public class SecurityConfig {
         return new BCryptPasswordEncoder();
     }
 
-    // [NOVO] Bean necessário para o AuthController realizar a autenticação
     @Bean
     public AuthenticationManager authenticationManager(AuthenticationConfiguration configuration) throws Exception {
         return configuration.getAuthenticationManager();
@@ -48,29 +48,30 @@ public class SecurityConfig {
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
             .csrf(AbstractHttpConfigurer::disable)
-            // [NOVO] Garante que a sessão é Stateless (padrão JWT)
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
                 // 1. Rotas Públicas
                 .requestMatchers(
-                    "/api/auth/**",              // Login e Recuperação
-                    "/ws-votzz/**",              // WebSocket
+                    "/api/auth/**",
+                    "/ws-votzz/**",
                     "/h2-console/**",
                     "/api/tenants/public-list",
-                    "/api/users/register-resident" // [AJUSTE] Liberado para novos moradores
+                    "/api/users/register-resident",
+                    "/api/payment/webhook/**"
                 ).permitAll()
                 
                 // 2. Rota do Super Admin
                 .requestMatchers("/api/admin/**").hasAuthority("ADMIN") 
                 
-                // 3. Afiliados (Opcional: se quiser proteger as rotas de afiliados)
+                // 3. Afiliados
                 .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
                 
                 // 4. Todo o resto exige autenticação
                 .anyRequest().authenticated()
             )
-            .addFilterBefore(tenantSecurityFilter, UsernamePasswordAuthenticationFilter.class);
+            // [CORREÇÃO] Adicionando o securityFilter correto
+            .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
             
         http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
 
@@ -80,8 +81,9 @@ public class SecurityConfig {
     @Bean
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(allowedOrigins != null ? allowedOrigins : List.of("*")); 
-        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")); 
+        
+        config.setAllowedOriginPatterns(List.of("http://localhost:5173", "http://127.0.0.1:5173", "http://localhost:3000")); 
+        config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token"));
         config.setAllowCredentials(true);
 

@@ -13,12 +13,17 @@ import java.util.UUID;
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, UUID> {
 
-    // --- CORREÇÃO AQUI ---
-    // Antes: b.areaId = :areaId
-    // Agora: b.commonArea.id = :areaId
-    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status <> 'CANCELLED'")
+    // Busca reservas ativas (PENDING ou APPROVED) para bloquear o dia
+    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status NOT IN ('CANCELLED', 'REJECTED')")
     List<Booking> findActiveBookingsByAreaAndDate(@Param("areaId") UUID areaId, @Param("date") LocalDate date);
 
-    // Se tiver outras queries usando areaId, corrija também:
-    // List<Booking> findByCommonAreaId(UUID areaId); // O Spring Data entende isso automaticamente
+    // Lista todas as reservas do condomínio (para o síndico)
+    @Query("SELECT b FROM Booking b WHERE b.tenant.id = :tenantId ORDER BY b.bookingDate DESC")
+    List<Booking> findAllByTenantId(@Param("tenantId") UUID tenantId);
+    
+    // Lista reservas de um usuário específico
+    List<Booking> findByUserIdOrderByBookingDateDesc(UUID userId);
+    
+    // Busca pelo ID do pagamento do Asaas (para o Webhook)
+    Booking findByAsaasPaymentId(String asaasPaymentId);
 }

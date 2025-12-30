@@ -2,6 +2,7 @@ package com.votzz.backend.controller;
 
 import com.votzz.backend.domain.Assembly;
 import com.votzz.backend.domain.ChatMessage;
+import com.votzz.backend.domain.Tenant; // [IMPORTANTE] Importar Tenant
 import com.votzz.backend.domain.User;
 import com.votzz.backend.repository.ChatMessageRepository;
 import lombok.Data;
@@ -31,25 +32,31 @@ public class ChatController {
         // 2. SALVAR NO BANCO
         ChatMessage entity = new ChatMessage();
         
-        // --- CORREÇÃO 1: Mapear IDs para Objetos (Hibernate Proxy) ---
-        // Não precisamos buscar no banco, basta criar um objeto com o ID setado.
+        // --- MAPEAMENTO DE IDs PARA OBJETOS (Hibernate Proxy) ---
         
+        // Assembly
         Assembly assemblyRef = new Assembly();
         assemblyRef.setId(assemblyId);
-        entity.setAssembly(assemblyRef); // Usa setAssembly, não setAssemblyId
+        entity.setAssembly(assemblyRef); 
 
+        // User
         User userRef = new User();
         userRef.setId(messageDTO.getUserId());
-        entity.setUser(userRef); // Usa setUser, não setUserId
+        entity.setUser(userRef); 
 
-        // --- CORREÇÃO 2: Campos simples ---
+        // --- CORREÇÃO DO ERRO AQUI ---
+        // Em vez de setTenantId, criamos um objeto Tenant com o ID
+        if (messageDTO.getTenantId() != null) {
+            Tenant tenantRef = new Tenant();
+            tenantRef.setId(messageDTO.getTenantId());
+            entity.setTenant(tenantRef); // Agora usamos setTenant!
+        }
+
+        // Campos simples
         entity.setUserName(messageDTO.getSenderName());
         entity.setContent(messageDTO.getContent());
-        entity.setTenantId(messageDTO.getTenantId()); 
-
-        // --- CORREÇÃO 3: Timestamp ---
-        // Não usamos entity.setTimestamp(). 
-        // A BaseEntity preenche 'createdAt' automaticamente ao salvar.
+        
+        // O BaseEntity preenche o 'createdAt' automaticamente no banco.
 
         chatMessageRepository.save(entity);
 

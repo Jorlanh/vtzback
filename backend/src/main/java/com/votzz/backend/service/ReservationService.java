@@ -3,7 +3,6 @@ package com.votzz.backend.service;
 import com.votzz.backend.domain.Booking;
 import com.votzz.backend.domain.Plano;
 import com.votzz.backend.domain.Tenant;
-import com.votzz.backend.dto.BookingRequest.CreditCardDTO; // Import do DTO
 import com.votzz.backend.integration.AsaasClient;
 import com.votzz.backend.repository.BookingRepository;
 import com.votzz.backend.repository.TenantRepository;
@@ -21,13 +20,12 @@ public class ReservationService {
     private final BookingRepository bookingRepository;
     private final AsaasClient asaasClient;
 
-    // Assinatura atualizada para receber dados de pagamento
+    // Assinatura atualizada: Removido cardData pois não usamos mais cartão
     public Booking criarReserva(
             UUID tenantId, 
             Booking reserva, 
             String payerAsaasId,
-            String billingType, 
-            CreditCardDTO cardData
+            String billingType
     ) {
         Tenant tenant = tenantRepository.findById(tenantId)
             .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
@@ -39,15 +37,13 @@ public class ReservationService {
              taxaVotzz = tenant.getPlano().getTaxaServicoReserva();
         }
         
-        // CORREÇÃO: Passando novos parâmetros (billingType, cardData e o User dono da reserva)
+        // CORREÇÃO: Chamada simplificada sem cartão
         String paymentId = asaasClient.criarCobrancaSplit(
             payerAsaasId,                 
             reserva.getTotalPrice(),      
             tenant.getAsaasWalletId(),    
             taxaVotzz,
-            billingType,                  // PIX, CREDIT_CARD...
-            cardData,                     // Dados do cartão
-            reserva.getUser()             // Dados do morador para antifraude
+            billingType                   // PIX ou BOLETO
         );
         
         reserva.setAsaasPaymentId(paymentId);

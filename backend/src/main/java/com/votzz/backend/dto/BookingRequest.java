@@ -10,15 +10,8 @@ public record BookingRequest(
     String startTime,
     String endTime,
     
-    // --- NOVOS CAMPOS PARA PAGAMENTO ---
-    String billingType, // "PIX", "BOLETO", "CREDIT_CARD", "DEBIT_CARD"
-    CreditCardDTO creditCard
+    // --- PAGAMENTO (Apenas PIX ou BOLETO agora) ---
+    String billingType // Esperado: "PIX" ou "BOLETO"
 ) {
-    public record CreditCardDTO(
-        String holderName,
-        String number,
-        String expiryMonth,
-        String expiryYear,
-        String ccv
-    ) {}
+    // CreditCardDTO removido pois não processamos mais cartão
 }
