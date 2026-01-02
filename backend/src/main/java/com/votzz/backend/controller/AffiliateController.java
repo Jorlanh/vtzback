@@ -26,9 +26,13 @@ public class AffiliateController {
     private final PasswordEncoder passwordEncoder;
 
     // --- DASHBOARD DE AFILIADO ---
-    @GetMapping("/{afiliadoId}/dashboard")
-    public ResponseEntity<AffiliateService.DashboardDTO> getDashboard(@PathVariable UUID afiliadoId) {
-        return ResponseEntity.ok(affiliateService.getDashboard(afiliadoId));
+    // [CORREÇÃO] Removido o ID da URL. Pega o afiliado logado via token para segurança.
+    @GetMapping("/dashboard")
+    public ResponseEntity<?> getDashboard(Principal principal) {
+        User user = userRepository.findByEmail(principal.getName())
+                .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+        
+        return ResponseEntity.ok(affiliateService.getDashboard(user));
     }
     
     // --- FORÇAR PAGAMENTOS (DEV/ADMIN) ---
@@ -45,7 +49,6 @@ public class AffiliateController {
         User user = userRepository.findByEmail(principal.getName())
                 .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
 
-        // O erro de compilação ocorria aqui porque o método não existia no repositório
         Afiliado afiliado = afiliadoRepository.findByUser(user)
                 .orElseThrow(() -> new RuntimeException("Perfil de afiliado não encontrado."));
 
@@ -54,10 +57,10 @@ public class AffiliateController {
             user.setWhatsapp(request.whatsapp());
         }
         
-        // Troca de Email com verificação
-        if (request.email() != null && !request.email().equals(user.getEmail())) {
+        // Troca de Email com verificação de conflito
+        if (request.email() != null && !request.email().isBlank() && !request.email().equals(user.getEmail())) {
             if (userRepository.findByEmail(request.email()).isPresent()) {
-                return ResponseEntity.badRequest().body("Email já em uso.");
+                return ResponseEntity.badRequest().body("Este e-mail já está em uso por outro usuário.");
             }
             user.setEmail(request.email());
         }

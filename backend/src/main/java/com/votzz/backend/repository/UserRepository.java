@@ -15,14 +15,9 @@ import java.util.UUID;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     
-    // [NOVO] Busca usuário por E-mail OU CPF (Fundamental para o login híbrido)
     Optional<User> findByEmailOrCpf(String email, String cpf);
-
     Optional<User> findByEmail(String email);
-    
     boolean existsByEmail(String email);
-
-    // [NOVO] Verifica se existe por CPF também (útil para validação no cadastro)
     boolean existsByCpf(String cpf);
 
     @Modifying
@@ -30,6 +25,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("UPDATE User u SET u.lastSeen = :now WHERE u.email = :email")
     void updateLastSeen(@Param("email") String email, @Param("now") LocalDateTime now);
 
+    // Conta usuários ativos após uma certa data/hora
     @Query("SELECT COUNT(u) FROM User u WHERE u.lastSeen > :limit")
     long countOnlineUsers(@Param("limit") LocalDateTime limit);
 }

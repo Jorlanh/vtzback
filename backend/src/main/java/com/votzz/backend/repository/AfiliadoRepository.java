@@ -14,11 +14,10 @@ public interface AfiliadoRepository extends JpaRepository<Afiliado, UUID> {
     // Busca um afiliado pelo código de indicação (ex: 'JOAO10')
     Optional<Afiliado> findByCodigoRef(String codigoRef);
 
-    // [CORREÇÃO] Busca afiliado passando a entidade User completa
-    // (Necessário para o AffiliateController funcionar como escrevemos)
+    // Busca afiliado passando a entidade User completa
     Optional<Afiliado> findByUser(User user);
     
-    // Busca afiliado apenas pelo ID do usuário (Útil se você tiver apenas o UUID)
+    // Busca afiliado apenas pelo ID do usuário
     Optional<Afiliado> findByUserId(UUID userId);
     
     // Verifica se já existe um código (Para validação no cadastro)

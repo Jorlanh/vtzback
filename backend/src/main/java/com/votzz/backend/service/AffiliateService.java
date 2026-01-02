@@ -1,9 +1,10 @@
 package com.votzz.backend.service;
 
 import com.votzz.backend.domain.Afiliado;
+import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.Comissao;
-import com.votzz.backend.domain.StatusComissao; // Importar o Enum que criamos
-import com.votzz.backend.integration.AsaasClient; // Mudado de AsaasService para AsaasClient (padrão do projeto)
+import com.votzz.backend.domain.StatusComissao; 
+import com.votzz.backend.integration.AsaasClient;
 import com.votzz.backend.repository.AfiliadoRepository;
 import com.votzz.backend.repository.ComissaoRepository;
 import lombok.RequiredArgsConstructor;
@@ -24,17 +25,25 @@ public class AffiliateService {
 
     private final ComissaoRepository comissaoRepository;
     private final AfiliadoRepository afiliadoRepository;
-    private final AsaasClient asaasClient; // Certifique-se que o nome da classe de integração é AsaasClient
+    private final AsaasClient asaasClient; 
 
     @Transactional(readOnly = true)
-    public DashboardDTO getDashboard(UUID afiliadoId) {
-        Afiliado afiliado = afiliadoRepository.findById(afiliadoId)
-            .orElseThrow(() -> new RuntimeException("Afiliado não encontrado"));
+    public DashboardDTO getDashboard(User user) {
+        // Busca o afiliado vinculado ao usuário logado
+        Afiliado afiliado = afiliadoRepository.findByUser(user)
+            .orElseThrow(() -> new RuntimeException("Conta de afiliado não encontrada."));
 
+        UUID afiliadoId = afiliado.getId();
+
+        // [CORREÇÃO] Tratamento de nulos caso não haja comissões ainda
         BigDecimal disponivel = comissaoRepository.sumSaldoDisponivel(afiliadoId);
+        if (disponivel == null) disponivel = BigDecimal.ZERO;
+
         BigDecimal futuro = comissaoRepository.sumSaldoFuturo(afiliadoId);
+        if (futuro == null) futuro = BigDecimal.ZERO;
         
-        String link = "https://votzz.com/register?ref=" + afiliado.getCodigoRef();
+        // Se usar link em produção, alterar para o domínio real
+        String link = "https://votzz.com/register-condo?ref=" + afiliado.getCodigoRef();
 
         return new DashboardDTO(disponivel, futuro, link);
     }
@@ -47,6 +56,7 @@ public class AffiliateService {
 
         for (Afiliado af : afiliados) {
             BigDecimal saldoDisponivel = comissaoRepository.sumSaldoDisponivel(af.getId());
+            if (saldoDisponivel == null) saldoDisponivel = BigDecimal.ZERO;
 
             if (saldoDisponivel.compareTo(new BigDecimal("30.00")) >= 0) {
                 try {
@@ -64,7 +74,7 @@ public class AffiliateService {
     private void baixarComissoesPagas(UUID afiliadoId, String transferId) {
         List<Comissao> pagas = comissaoRepository.findLiberadasParaSaque(afiliadoId, LocalDate.now());
         for (Comissao c : pagas) {
-            c.setStatus(StatusComissao.PAGO); // Uso correto do Enum
+            c.setStatus(StatusComissao.PAGO);
             c.setAsaasTransferId(transferId);
         }
         comissaoRepository.saveAll(pagas);

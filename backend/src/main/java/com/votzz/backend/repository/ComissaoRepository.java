@@ -1,7 +1,6 @@
 package com.votzz.backend.repository;
 
 import com.votzz.backend.domain.Comissao;
-// Removemos o import estático que estava falhando e usamos Comissao.StatusComissao no código ou ajustamos a query
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -20,11 +19,11 @@ public interface ComissaoRepository extends JpaRepository<Comissao, UUID> {
     List<Comissao> findLiberadasParaSaque(@Param("afiliadoId") UUID afiliadoId, @Param("dataLimite") LocalDate dataLimite);
 
     // Soma saldo disponível (Real)
-    @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'BLOQUEADO' AND c.dataLiberacao <= CURRENT_DATE")
+    @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'DISPONIVEL'")
     BigDecimal sumSaldoDisponivel(@Param("afiliadoId") UUID afiliadoId);
 
     // Soma saldo futuro (Bloqueado)
-    @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'BLOQUEADO' AND c.dataLiberacao > CURRENT_DATE")
+    @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'BLOQUEADO'")
     BigDecimal sumSaldoFuturo(@Param("afiliadoId") UUID afiliadoId);
     
     // Para o Dashboard Admin (Top Performers)
