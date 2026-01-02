@@ -11,6 +11,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
+import java.util.UUID;
 
 @Data
 @Entity
@@ -47,12 +48,11 @@ public class User extends BaseEntity implements UserDetails {
     @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
     private Tenant tenant;
 
-    // --- UserDetails Implementation ---
+    // --- UserDetails ---
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // [CORREÇÃO] Retorna apenas o nome da role (ex: "ADMIN", "SINDICO")
-        // Isso deve bater com .hasAuthority("ADMIN") no SecurityConfig
+        // [CORREÇÃO CRÍTICA] Retorna apenas "ADMIN", "SINDICO", etc. para bater com hasAuthority()
         if (this.role == null) return List.of();
         return List.of(new SimpleGrantedAuthority(this.role.name()));
     }

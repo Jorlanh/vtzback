@@ -32,11 +32,12 @@ public class SecurityFilter extends OncePerRequestFilter {
             var login = tokenService.validateToken(token);
 
             if (login != null && !login.isEmpty()) {
-                // Tenta buscar por email ou CPF (login híbrido)
                 UserDetails user = userRepository.findByEmailOrCpf(login, login).orElse(null);
 
                 if (user != null) {
-                    // Cria a autenticação usando as Authorities definidas na classe User (ex: "ADMIN")
+                    // [DEBUG] Verifique isso no console se der erro 403
+                    // System.out.println("User Autenticado: " + user.getUsername() + " | Authorities: " + user.getAuthorities());
+                    
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }

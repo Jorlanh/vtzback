@@ -27,10 +27,10 @@ public class AdminService {
     private final PlanoRepository planoRepository;
     private final PasswordEncoder passwordEncoder;
 
-    // [CORREÇÃO] Injeção correta da propriedade
     @Value("${votzz.admin.email}")
     private String masterEmail;
 
+    // --- DASHBOARD ---
     public AdminDashboardStats getDashboardStats() {
         long totalUsers = userRepository.count();
         long onlineUsers = userRepository.countOnlineUsers(LocalDateTime.now().minusMinutes(5));
@@ -44,6 +44,7 @@ public class AdminService {
         return new AdminDashboardStats(totalUsers, onlineUsers, totalTenants, activeTenants, mrrValue, 0L);
     }
 
+    // --- LISTAGEM ORGANIZADA ---
     public Map<String, Object> listOrganizedUsers() {
         List<User> allUsers = userRepository.findAll();
         
@@ -62,6 +63,64 @@ public class AdminService {
         return response;
     }
 
+    // --- NOVA FUNCIONALIDADE: LISTAR CONDOMÍNIOS PARA EDIÇÃO ---
+    public List<Tenant> listAllTenants() {
+        return tenantRepository.findAll();
+    }
+
+    // --- SUPORTE: EDIÇÃO TOTAL DE USUÁRIO ---
+    @Transactional
+    public void adminUpdateUser(UUID userId, UserDTO dto, String newPassword) {
+        User user = userRepository.findById(userId)
+            .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
+
+        // Atualiza dados básicos
+        if (dto.getNome() != null) user.setNome(dto.getNome());
+        if (dto.getEmail() != null) user.setEmail(dto.getEmail());
+        if (dto.getCpf() != null) user.setCpf(dto.getCpf());
+        if (dto.getWhatsapp() != null) user.setWhatsapp(dto.getWhatsapp());
+        if (dto.getUnidade() != null) user.setUnidade(dto.getUnidade());
+        if (dto.getBloco() != null) user.setBloco(dto.getBloco());
+
+        // Troca de senha se solicitada
+        if (newPassword != null && !newPassword.isBlank()) {
+            user.setPassword(passwordEncoder.encode(newPassword));
+        }
+
+        userRepository.save(user);
+    }
+
+    // --- SUPORTE: ALTERAR SECRET KEY DO CONDOMÍNIO ---
+    @Transactional
+    public void updateTenantSecret(UUID tenantId, String newSecret) {
+        Tenant tenant = tenantRepository.findById(tenantId)
+            .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+        
+        tenant.setSecretKeyword(newSecret);
+        tenantRepository.save(tenant);
+    }
+
+    // --- SEGURANÇA: EXCLUSÃO DE USUÁRIO (APENAS MESTRE) ---
+    @Transactional
+    public void deleteUser(UUID userId) {
+        String currentAdmin = SecurityContextHolder.getContext().getAuthentication().getName();
+        
+        // Verifica se quem está tentando apagar é o Master definido no properties
+        if (!currentAdmin.equalsIgnoreCase(masterEmail)) {
+            throw new RuntimeException("PERMISSÃO NEGADA: Apenas o Admin Mestre (" + masterEmail + ") pode excluir contas.");
+        }
+
+        User target = userRepository.findById(userId).orElseThrow();
+        
+        // Impede que o mestre se auto-delete acidentalmente
+        if (target.getEmail().equalsIgnoreCase(masterEmail)) {
+            throw new RuntimeException("Você não pode excluir a conta Mestre do sistema.");
+        }
+
+        userRepository.delete(target);
+    }
+
+    // --- CRIAÇÃO E OUTROS MÉTODOS EXISTENTES ---
     private UserDTO mapToDTO(User u) {
         return new UserDTO(
             u.getId(), u.getNome(), u.getEmail(), u.getRole().name(),
@@ -86,10 +145,7 @@ public class AdminService {
     @Transactional
     public void createTenantManual(String condoName, String cnpj, Integer qtyUnits, String secretKeyword, 
                                    String nameSyndic, String emailSyndic, String cpfSyndic, String phoneSyndic, String passwordSyndic) {
-        
-        Plano plano = planoRepository.findAll().stream().findFirst()
-            .orElseThrow(() -> new RuntimeException("Cadastre ao menos um plano no banco primeiro."));
-
+        Plano plano = planoRepository.findAll().stream().findFirst().orElseThrow();
         Tenant tenant = new Tenant();
         tenant.setNome(condoName);
         tenant.setCnpj(cnpj);
@@ -107,16 +163,14 @@ public class AdminService {
         syndic.setPassword(passwordEncoder.encode(passwordSyndic));
         syndic.setRole(Role.SINDICO);
         syndic.setTenant(tenant);
-        syndic.setUnidade("ADM");
         userRepository.save(syndic);
     }
 
     @Transactional
     public void createNewAdmin(String nome, String email, String cpf, String whatsapp, String password) {
-        String currentAdmin = SecurityContextHolder.getContext().getAuthentication().getName();
-        if (!currentAdmin.equalsIgnoreCase(masterEmail)) {
-            throw new RuntimeException("Acesso Negado: Apenas o Administrador Mestre pode criar novos Admins.");
-        }
+        String current = SecurityContextHolder.getContext().getAuthentication().getName();
+        if (!current.equalsIgnoreCase(masterEmail)) throw new RuntimeException("Acesso Negado: Apenas o Mestre.");
+        
         User admin = new User();
         admin.setNome(nome);
         admin.setEmail(email);
@@ -124,20 +178,6 @@ public class AdminService {
         admin.setWhatsapp(whatsapp);
         admin.setPassword(passwordEncoder.encode(password));
         admin.setRole(Role.ADMIN);
-        admin.setTenant(null); 
         userRepository.save(admin);
-    }
-
-    @Transactional
-    public void forceResetPassword(UUID userId, String newPassword) {
-        User target = userRepository.findById(userId).orElseThrow();
-        String currentAdmin = SecurityContextHolder.getContext().getAuthentication().getName();
-
-        if (target.getEmail().equalsIgnoreCase(masterEmail) && !currentAdmin.equalsIgnoreCase(masterEmail)) {
-            throw new RuntimeException("Proteção Mestre: Você não tem permissão para alterar este usuário.");
-        }
-
-        target.setPassword(passwordEncoder.encode(newPassword));
-        userRepository.save(target);
     }
 }
