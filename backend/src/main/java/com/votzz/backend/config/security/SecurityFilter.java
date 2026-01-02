@@ -29,14 +29,14 @@ public class SecurityFilter extends OncePerRequestFilter {
         var token = this.recoverToken(request);
 
         if (token != null) {
-            // Agora isso funciona pois atualizamos o TokenService para aceitar apenas 1 argumento
             var login = tokenService.validateToken(token);
 
             if (login != null && !login.isEmpty()) {
-                // Busca o usuário pelo email ou cpf extraído do token
+                // Tenta buscar por email ou CPF (login híbrido)
                 UserDetails user = userRepository.findByEmailOrCpf(login, login).orElse(null);
 
                 if (user != null) {
+                    // Cria a autenticação usando as Authorities definidas na classe User (ex: "ADMIN")
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }

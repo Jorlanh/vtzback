@@ -1,13 +1,12 @@
 package com.votzz.backend.domain;
 
+import com.votzz.backend.domain.enums.Role;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
-
-import com.votzz.backend.domain.enums.Role;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -17,7 +16,7 @@ import java.util.List;
 @Entity
 @Table(name = "users")
 @EqualsAndHashCode(callSuper = true)
-public class User extends BaseEntity implements UserDetails { // [MUDANÇA 1] Implementa UserDetails
+public class User extends BaseEntity implements UserDetails {
 
     @Column(nullable = false)
     private String nome;
@@ -48,39 +47,30 @@ public class User extends BaseEntity implements UserDetails { // [MUDANÇA 1] Im
     @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
     private Tenant tenant;
 
-    // --- [MUDANÇA 2] Métodos obrigatórios do UserDetails ---
+    // --- UserDetails Implementation ---
 
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Converte sua Role para o formato que o Spring Security entende
-        if (this.role == Role.ADMIN) {
-            return List.of(new SimpleGrantedAuthority("ROLE_ADMIN"), new SimpleGrantedAuthority("ROLE_USER"));
-        }
-        else return List.of(new SimpleGrantedAuthority("ROLE_USER"));
+        // [CORREÇÃO] Retorna apenas o nome da role (ex: "ADMIN", "SINDICO")
+        // Isso deve bater com .hasAuthority("ADMIN") no SecurityConfig
+        if (this.role == null) return List.of();
+        return List.of(new SimpleGrantedAuthority(this.role.name()));
     }
 
     @Override
     public String getUsername() {
-        return email; // O Spring usa isso para identificar o usuário internamente
+        return email;
     }
 
     @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
+    public boolean isAccountNonExpired() { return true; }
 
     @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
+    public boolean isAccountNonLocked() { return true; }
 
     @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
+    public boolean isCredentialsNonExpired() { return true; }
 
     @Override
-    public boolean isEnabled() {
-        return true;
-    }
+    public boolean isEnabled() { return true; }
 }

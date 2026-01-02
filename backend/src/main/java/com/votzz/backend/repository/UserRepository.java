@@ -15,7 +15,9 @@ import java.util.UUID;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     
+    // Essencial para o SecurityFilter funcionar
     Optional<User> findByEmailOrCpf(String email, String cpf);
+    
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
     boolean existsByCpf(String cpf);
@@ -25,7 +27,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     @Query("UPDATE User u SET u.lastSeen = :now WHERE u.email = :email")
     void updateLastSeen(@Param("email") String email, @Param("now") LocalDateTime now);
 
-    // Conta usuários ativos após uma certa data/hora
+    // Usado no Dashboard Admin para métrica "Online Agora"
     @Query("SELECT COUNT(u) FROM User u WHERE u.lastSeen > :limit")
     long countOnlineUsers(@Param("limit") LocalDateTime limit);
 }

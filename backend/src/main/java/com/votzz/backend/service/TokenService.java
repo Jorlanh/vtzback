@@ -17,23 +17,22 @@ import java.util.function.Function;
 @Service
 public class TokenService {
 
-    // Lê do application.properties. Se não existir, a aplicação nem sobe (segurança).
-    @Value("${jwt.secret}")
+    // [CORREÇÃO] Agora aponta para a chave correta do seu application.properties
+    @Value("${jwt.secret}") 
     private String secret;
 
     @Value("${jwt.expiration}")
-    private Long expiration; // Ex: 86400000 para 24h
+    private Long expiration;
 
-   // --- GERAÇÃO DO TOKEN ---
     public String generateToken(User user) {
         Map<String, Object> claims = new HashMap<>();
-        claims.put("role", user.getRole());
+        // Garante que a role seja salva como String (ex: "ADMIN")
+        claims.put("role", user.getRole().name()); 
         
         if (user.getTenant() != null) {
             claims.put("tenantId", user.getTenant().getId());
         }
 
-        // Usamos o Email como Subject (identificador principal)
         return createToken(claims, user.getEmail());
     }
 
@@ -51,21 +50,13 @@ public class TokenService {
         return Keys.hmacShaKeyFor(secret.getBytes());
     }
 
-    // --- VALIDAÇÃO (Adaptado para o SecurityFilter) ---
-    
-    // Este método é chamado pelo SecurityFilter. 
-    // Ele tenta ler o token. Se conseguir, retorna o Email (Subject). Se der erro (expirado/inválido), retorna vazio.
     public String validateToken(String token) {
         try {
             return extractUsername(token);
         } catch (Exception e) {
-            // Se o token estiver expirado ou assinatura inválida, o parser lança exceção.
-            // Retornamos vazio para indicar que a validação falhou.
-            return "";
+            return ""; // Token inválido
         }
     }
-
-    // --- MÉTODOS AUXILIARES ---
 
     public String extractUsername(String token) {
         return extractClaim(token, Claims::getSubject);

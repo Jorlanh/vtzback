@@ -14,7 +14,7 @@ import java.util.UUID;
 @Configuration
 public class DataInitializer {
 
-    // Injetando valores do application.properties (que podem vir do ambiente)
+    // Valores injetados do application.properties
     @Value("${votzz.admin.id}")
     private String adminId;
 
@@ -36,32 +36,35 @@ public class DataInitializer {
     @Bean
     CommandLineRunner initDatabase(UserRepository userRepository, PasswordEncoder passwordEncoder) {
         return args -> {
-            System.out.println("----- INICIALIZANDO SUPER ADMIN (SEGURO) -----");
+            System.out.println("----- INICIALIZANDO SUPER ADMIN -----");
 
             // Verifica se o Admin já existe pelo E-mail
             User admin = userRepository.findByEmail(adminEmail).orElse(null);
 
-            // Cria o objeto com os dados das variáveis de ambiente
             if (admin == null) {
                 admin = new User();
-                admin.setId(UUID.fromString(adminId)); // Usa o ID configurado
+                try {
+                    admin.setId(UUID.fromString(adminId));
+                } catch (Exception e) {
+                    admin.setId(UUID.randomUUID());
+                }
             }
 
-            // Atualiza os dados (Garante que se você mudar a variável no servidor, o banco atualiza)
+            // Atualiza ou define os dados
             admin.setNome(adminName);
             admin.setEmail(adminEmail);
             admin.setRole(Role.ADMIN);
             admin.setCpf(adminCpf);
             admin.setWhatsapp(adminPhone);
 
-            // Só atualiza a senha se ela mudou (para não re-criptografar o mesmo hash toda vez)
+            // Só re-criptografa se a senha mudou (evita logar com hash antigo)
             if (!passwordEncoder.matches(adminPassword, admin.getPassword())) {
                 admin.setPassword(passwordEncoder.encode(adminPassword));
                 System.out.println(">>> Senha do Admin atualizada.");
             }
 
             userRepository.save(admin);
-            System.out.println(">>> Super Admin verificado/atualizado com sucesso.");
+            System.out.println(">>> Super Admin (" + adminEmail + ") pronto para uso.");
         };
     }
 }

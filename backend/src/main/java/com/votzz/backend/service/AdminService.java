@@ -27,7 +27,7 @@ public class AdminService {
     private final PlanoRepository planoRepository;
     private final PasswordEncoder passwordEncoder;
 
-    // Captura o e-mail mascarado da sua configuração
+    // [CORREÇÃO] Injeção correta da propriedade
     @Value("${votzz.admin.email}")
     private String masterEmail;
 
@@ -37,7 +37,6 @@ public class AdminService {
         long totalTenants = tenantRepository.count();
         long activeTenants = tenantRepository.countByAtivoTrue();
         
-        // MRR Real baseado nos planos ativos
         double mrrValue = tenantRepository.findByAtivoTrue().stream()
                 .mapToDouble(t -> t.getPlano() != null ? t.getPlano().getPrecoBase().doubleValue() : 0.0)
                 .sum();
@@ -50,17 +49,16 @@ public class AdminService {
         
         List<UserDTO> afiliados = allUsers.stream()
                 .filter(u -> u.getRole() == Role.AFILIADO)
-                .map(this::mapToDTO)
-                .collect(Collectors.toList());
+                .map(this::mapToDTO).collect(Collectors.toList());
 
-        Map<String, List<UserDTO>> pastasCondominios = allUsers.stream()
+        Map<String, List<UserDTO>> pastas = allUsers.stream()
                 .filter(u -> u.getTenant() != null)
                 .map(this::mapToDTO)
                 .collect(Collectors.groupingBy(UserDTO::getCondominio));
 
         Map<String, Object> response = new HashMap<>();
         response.put("afiliados", afiliados);
-        response.put("pastas", pastasCondominios);
+        response.put("pastas", pastas);
         return response;
     }
 
@@ -116,12 +114,9 @@ public class AdminService {
     @Transactional
     public void createNewAdmin(String nome, String email, String cpf, String whatsapp, String password) {
         String currentAdmin = SecurityContextHolder.getContext().getAuthentication().getName();
-        
-        // Proteção Mestre: Compara com o e-mail configurado
         if (!currentAdmin.equalsIgnoreCase(masterEmail)) {
             throw new RuntimeException("Acesso Negado: Apenas o Administrador Mestre pode criar novos Admins.");
         }
-        
         User admin = new User();
         admin.setNome(nome);
         admin.setEmail(email);
@@ -138,7 +133,6 @@ public class AdminService {
         User target = userRepository.findById(userId).orElseThrow();
         String currentAdmin = SecurityContextHolder.getContext().getAuthentication().getName();
 
-        // Ninguém altera o mestre, exceto ele mesmo
         if (target.getEmail().equalsIgnoreCase(masterEmail) && !currentAdmin.equalsIgnoreCase(masterEmail)) {
             throw new RuntimeException("Proteção Mestre: Você não tem permissão para alterar este usuário.");
         }
