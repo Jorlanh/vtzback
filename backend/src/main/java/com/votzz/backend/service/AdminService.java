@@ -158,25 +158,56 @@ public class AdminService {
         logAction("CRIAR_CONDOMINIO", "Criou condomínio " + tenant.getNome() + " e síndico " + syndic.getNome());
     }
 
-    // --- EDIÇÃO DE CONDOMÍNIO ---
+    // --- EDIÇÃO DE CONDOMÍNIO (GOD MODE ATUALIZADO) ---
     @Transactional
     public void updateTenant(UUID tenantId, UpdateTenantDTO dto) {
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow();
-        if (dto.nome() != null) tenant.setNome(dto.nome());
-        if (dto.cnpj() != null) tenant.setCnpj(dto.cnpj());
-        if (dto.unidadesTotal() != null) tenant.setUnidadesTotal(dto.unidadesTotal());
-        if (dto.ativo() != null) tenant.setAtivo(dto.ativo());
-        if (dto.secretKeyword() != null) tenant.setSecretKeyword(dto.secretKeyword());
-        if (dto.cep() != null) tenant.setCep(dto.cep());
-        if (dto.logradouro() != null) tenant.setLogradouro(dto.logradouro());
-        if (dto.numero() != null) tenant.setNumero(dto.numero());
-        if (dto.bairro() != null) tenant.setBairro(dto.bairro());
-        if (dto.cidade() != null) tenant.setCidade(dto.cidade());
-        if (dto.estado() != null) tenant.setEstado(dto.estado());
-        if (dto.pontoReferencia() != null) tenant.setPontoReferencia(dto.pontoReferencia());
+        StringBuilder detailsLog = new StringBuilder("Alterou Condomínio " + tenant.getNome() + ": ");
+        boolean changed = false;
+
+        if (hasChanged(tenant.getNome(), dto.nome())) {
+            tenant.setNome(dto.nome()); changed = true;
+        }
+        if (hasChanged(tenant.getCnpj(), dto.cnpj())) {
+            tenant.setCnpj(dto.cnpj()); changed = true;
+        }
+        if (dto.unidadesTotal() != null && !dto.unidadesTotal().equals(tenant.getUnidadesTotal())) {
+            tenant.setUnidadesTotal(dto.unidadesTotal()); changed = true;
+        }
+        // Lógica God Mode: Status
+        if (dto.ativo() != null && dto.ativo() != tenant.isAtivo()) {
+            tenant.setAtivo(dto.ativo());
+            detailsLog.append(dto.ativo() ? "[ATIVOU] " : "[BLOQUEOU] ");
+            changed = true;
+        }
+        // Lógica God Mode: Plano
+        if (dto.plano() != null) {
+            planoRepository.findByNomeIgnoreCase(dto.plano()).ifPresent(p -> {
+                if (!p.equals(tenant.getPlano())) {
+                    tenant.setPlano(p);
+                    detailsLog.append("Plano -> ").append(p.getNome()).append(". ");
+                }
+            });
+            changed = true;
+        }
+        // Lógica God Mode: Validade
+        if (dto.dataExpiracaoPlano() != null) {
+            tenant.setDataExpiracaoPlano(dto.dataExpiracaoPlano());
+            detailsLog.append("Validade -> ").append(dto.dataExpiracaoPlano()).append(". ");
+            changed = true;
+        }
+
+        if (hasChanged(tenant.getSecretKeyword(), dto.secretKeyword())) tenant.setSecretKeyword(dto.secretKeyword());
+        if (hasChanged(tenant.getCep(), dto.cep())) tenant.setCep(dto.cep());
+        if (hasChanged(tenant.getLogradouro(), dto.logradouro())) tenant.setLogradouro(dto.logradouro());
+        if (hasChanged(tenant.getNumero(), dto.numero())) tenant.setNumero(dto.numero());
+        if (hasChanged(tenant.getBairro(), dto.bairro())) tenant.setBairro(dto.bairro());
+        if (hasChanged(tenant.getCidade(), dto.cidade())) tenant.setCidade(dto.cidade());
+        if (hasChanged(tenant.getEstado(), dto.estado())) tenant.setEstado(dto.estado());
+        if (hasChanged(tenant.getPontoReferencia(), dto.pontoReferencia())) tenant.setPontoReferencia(dto.pontoReferencia());
         
         tenantRepository.save(tenant);
-        logAction("EDITAR_CONDOMINIO", "Atualizou dados do condomínio " + tenant.getNome());
+        if(changed) logAction("EDITAR_CONDOMINIO", detailsLog.toString());
     }
 
     // --- CUPONS ---
@@ -226,7 +257,7 @@ public class AdminService {
         logAction("DELETAR_USUARIO", "Removeu usuário " + target.getNome() + " (" + target.getEmail() + ")");
     }
 
-    // --- ATUALIZAÇÃO DE USUÁRIO (AGORA COM CARGO) ---
+    // --- ATUALIZAÇÃO DE USUÁRIO (AUDITORIA DETALHADA) ---
     @Transactional
     public void adminUpdateUser(UUID userId, UpdateUserRequest req) {
         User user = userRepository.findById(userId).orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
@@ -236,30 +267,47 @@ public class AdminService {
              throw new RuntimeException("Você não tem permissão para editar o Super Admin.");
         }
 
+        List<String> changes = new ArrayList<>();
+
         if (req.email() != null && !req.email().isBlank() && !req.email().equals(user.getEmail())) {
             if (userRepository.findByEmail(req.email()).isPresent()) throw new RuntimeException("Este e-mail já está em uso.");
+            changes.add("Email: " + user.getEmail() + " -> " + req.email());
             user.setEmail(req.email());
         }
 
-        if(req.nome() != null && !req.nome().isBlank()) user.setNome(req.nome());
-        if(req.cpf() != null) user.setCpf(req.cpf());
-        if(req.whatsapp() != null) user.setWhatsapp(req.whatsapp());
+        if(hasChanged(user.getNome(), req.nome())) {
+            changes.add("Nome: " + user.getNome() + " -> " + req.nome());
+            user.setNome(req.nome());
+        }
+        if(hasChanged(user.getCpf(), req.cpf())) {
+            changes.add("CPF alterado");
+            user.setCpf(req.cpf());
+        }
+        if(hasChanged(user.getWhatsapp(), req.whatsapp())) {
+            changes.add("Zap: " + user.getWhatsapp() + " -> " + req.whatsapp());
+            user.setWhatsapp(req.whatsapp());
+        }
         
         // --- ATUALIZAÇÃO DE CARGO ---
         if(req.role() != null && !req.role().isBlank()) {
             try {
-                user.setRole(Role.valueOf(req.role()));
-            } catch (IllegalArgumentException e) {
-                // Ignora se o role for inválido ou mantém o antigo
-            }
+                Role newRole = Role.valueOf(req.role());
+                if(user.getRole() != newRole) {
+                    changes.add("Cargo: " + user.getRole() + " -> " + newRole);
+                    user.setRole(newRole);
+                }
+            } catch (IllegalArgumentException e) {}
         }
         
         if(req.newPassword() != null && !req.newPassword().isBlank()) {
+            changes.add("Senha alterada");
             user.setPassword(passwordEncoder.encode(req.newPassword()));
         }
         
         userRepository.save(user);
-        logAction("EDITAR_USUARIO", "Atualizou perfil de " + user.getNome() + ". Novo cargo: " + user.getRole());
+        
+        String details = changes.isEmpty() ? "Atualizou perfil (sem mudanças visíveis)" : "Alterou: " + String.join(", ", changes);
+        logAction("EDITAR_USUARIO", "Em " + user.getNome() + ": " + details);
     }
 
     // --- MÉTODO DE AUDITORIA ---
@@ -309,5 +357,12 @@ public class AdminService {
             u.getTenant() != null ? u.getTenant().getId() : null, 
             u.getCpf(), u.getWhatsapp()
         );
+    }
+
+    // Helper para comparar strings evitando NullPointer
+    private boolean hasChanged(String oldVal, String newVal) {
+        if (newVal == null) return false;
+        if (oldVal == null) return !newVal.isEmpty();
+        return !oldVal.equals(newVal);
     }
 }

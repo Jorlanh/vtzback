@@ -14,6 +14,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -116,8 +117,10 @@ public class AdminController {
         String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia
     ) {}
 
+    // ATUALIZADO: Adicionei 'plano' e 'dataExpiracaoPlano'
     public record UpdateTenantDTO(
         String nome, String cnpj, Integer unidadesTotal, Boolean ativo, String secretKeyword,
+        String plano, LocalDate dataExpiracaoPlano,
         String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia
     ) {}
 
@@ -133,7 +136,6 @@ public class AdminController {
         @JsonProperty("bloco") String bloco
     ) {}
 
-    // --- ADICIONEI O CAMPO 'role' AQUI ---
     public record UpdateUserRequest(
         @JsonProperty("nome") @JsonAlias({"name", "nomeCompleto", "fullName"}) String nome, 
         @JsonProperty("email") String email, 

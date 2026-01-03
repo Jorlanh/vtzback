@@ -12,5 +12,8 @@ public interface PlanoRepository extends JpaRepository<Plano, UUID> {
     
     // Método auxiliar opcional, caso queira buscar pelo nome (ex: "Business")
     Optional<Plano> findByNome(String nome);
+
+    // Método case-insensitive para o Admin Panel (MENSAL, mensal, Mensal)
+    Optional<Plano> findByNomeIgnoreCase(String nome);
     
 }
