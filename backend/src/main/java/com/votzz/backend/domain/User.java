@@ -48,19 +48,16 @@ public class User extends BaseEntity implements UserDetails {
     @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
     private Tenant tenant;
 
-    // --- UserDetails ---
-
+    // --- CORREÇÃO CRÍTICA PARA O ERRO 403 ---
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // [CORREÇÃO CRÍTICA] Retorna apenas "ADMIN", "SINDICO", etc. para bater com hasAuthority()
+        // Retorna exatamente "ADMIN" (sem ROLE_) para bater com .hasAuthority("ADMIN")
         if (this.role == null) return List.of();
         return List.of(new SimpleGrantedAuthority(this.role.name()));
     }
 
     @Override
-    public String getUsername() {
-        return email;
-    }
+    public String getUsername() { return email; }
 
     @Override
     public boolean isAccountNonExpired() { return true; }

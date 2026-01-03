@@ -26,7 +26,21 @@ public class Tenant {
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 
+    // --- ENDEREÇO COMPLETO ---
+    private String cep;
+    private String logradouro;
+    private String numero;
+    private String bairro;
+    private String cidade;
+    private String estado;
+    private String pontoReferencia;
+
     // --- Campos SaaS ---
+    @Column(name = "unidades_total")
+    private Integer unidadesTotal;
+
+    @Column(name = "blocos_total")
+    private Integer blocos; // [NOVO]
 
     @ManyToOne
     @JoinColumn(name = "plano_id")
@@ -36,14 +50,18 @@ public class Tenant {
     @JoinColumn(name = "afiliado_id")
     private Afiliado afiliado;
 
+    // Integrações
     @Column(name = "asaas_customer_id")
     private String asaasCustomerId;
 
     @Column(name = "asaas_wallet_id")
     private String asaasWalletId;
+    
+    @Column(name = "kiwify_transaction_id")
+    private String kiwifyTransactionId;
 
-    @Column(name = "unidades_total")
-    private Integer unidadesTotal;
+    @Column(name = "status_assinatura") 
+    private String statusAssinatura;
 
     @Column(name = "data_expiracao_plano")
     private LocalDate dataExpiracaoPlano;
@@ -53,32 +71,22 @@ public class Tenant {
 
     @PrePersist
     protected void onCreate() {
-        if (createdAt == null) {
-            createdAt = LocalDateTime.now();
-        }
+        if (createdAt == null) createdAt = LocalDateTime.now();
     }
 
-    // [NOVO] Método auxiliar para saber se está vencido
     public boolean isSubscriptionActive() {
         if (this.dataExpiracaoPlano == null) return false;
-        // Retorna TRUE se a data de expiração for HOJE ou DEPOIS de hoje
         return !this.dataExpiracaoPlano.isBefore(LocalDate.now());
     }
 
-    // [NOVO] Lógica Inteligente de Renovação (Soma dias ou Reinicia)
     public void renovarAssinatura(int mesesParaAdicionar) {
         LocalDate hoje = LocalDate.now();
-
         if (this.dataExpiracaoPlano == null || this.dataExpiracaoPlano.isBefore(hoje)) {
-            // Se já venceu (ex: venceu dia 07/01/26 e hoje é 08/01/26), 
-            // a nova data começa a contar de HOJE.
             this.dataExpiracaoPlano = hoje.plusMonths(mesesParaAdicionar);
         } else {
-            // Se ainda não venceu (ex: vence dia 07/01/26 e hoje é 30/12/25),
-            // soma 12 meses na data FUTURA (vira 07/01/27).
             this.dataExpiracaoPlano = this.dataExpiracaoPlano.plusMonths(mesesParaAdicionar);
         }
-        
-        this.ativo = true; // Garante que reativa se estava suspenso
+        this.ativo = true;
+        this.statusAssinatura = "ACTIVE";
     }
 }

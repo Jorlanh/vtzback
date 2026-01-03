@@ -20,8 +20,18 @@ public class Coupon {
     @Column(name = "discount_percent", nullable = false)
     private BigDecimal discountPercent;
 
-    private boolean active = true;
+    private Integer quantity;
+
+    private Boolean active = true;
 
     @Column(name = "expiration_date")
     private LocalDateTime expirationDate;
+    
+    @Column(name = "created_at")
+    private LocalDateTime createdAt;
+    
+    @PrePersist
+    protected void onCreate() {
+        createdAt = LocalDateTime.now();
+    }
 }

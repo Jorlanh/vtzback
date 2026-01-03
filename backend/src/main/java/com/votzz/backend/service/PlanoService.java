@@ -35,8 +35,6 @@ public class PlanoService {
             BigDecimal base = new BigDecimal("490.00");
             
             // Regra: R$ 490 base + R$ 2,50 por unidade ADICIONAL acima de 80
-            // Isso evita que o condomínio pule de R$ 490 para R$ 692 só por ter 81 unidades.
-            // Se tiver 81 unidades, paga R$ 490 + R$ 2,50 = R$ 492,50.
             int unidadesExtras = qtdUnidades - 80;
             BigDecimal custoExtra = BigDecimal.valueOf(unidadesExtras).multiply(new BigDecimal("2.50"));
             

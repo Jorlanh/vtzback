@@ -19,6 +19,12 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
 
     Tenant findByAsaasCustomerId(String asaasCustomerId);
 
+    // [ADICIONADO] Este método faltava para calcular o MRR no Dashboard
+    List<Tenant> findByStatusAssinatura(String statusAssinatura);
+
+    // [ADICIONADO] Útil para validações de unicidade no cadastro manual
+    Optional<Tenant> findByCnpj(String cnpj);
+
     // Busca flexível por CNPJ ou Nome (Case insensitive)
     @Query("SELECT t FROM Tenant t WHERE t.cnpj = :identifier OR LOWER(t.nome) = LOWER(:identifier)")
     Optional<Tenant> findByCnpjOrNome(@Param("identifier") String identifier);

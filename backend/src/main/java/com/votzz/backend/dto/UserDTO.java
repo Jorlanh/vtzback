@@ -16,13 +16,14 @@ public class UserDTO {
     private String role;
     private String condominio;
     private LocalDateTime lastSeen;
+    private String token; // Mantido para compatibilidade com Login, pode ser null aqui
     private String bloco;
     private String unidade;
     private UUID tenantId;
-    private String cpf;      // Adicionado
-    private String whatsapp; // Adicionado
+    private String cpf;      
+    private String whatsapp; 
 
-    // Construtor compacto para o AdminService simplificar a query
+    // Construtor compacto que você pediu para o AdminService (caso use queries específicas)
     public UserDTO(UUID id, String nome, String email, String role, String condominio, LocalDateTime lastSeen) {
         this.id = id;
         this.nome = nome;
