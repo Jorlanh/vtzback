@@ -9,7 +9,7 @@ import java.util.UUID;
 @Data
 @Entity
 @Table(name = "tenants")
-public class Tenant { 
+public class Tenant {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -23,8 +23,11 @@ public class Tenant {
 
     private boolean ativo;
 
-    @Column(name = "created_at")
+    @Column(name = "created_at", updatable = false)
     private LocalDateTime createdAt;
+
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
 
     // --- ENDEREÇO COMPLETO ---
     private String cep;
@@ -33,6 +36,8 @@ public class Tenant {
     private String bairro;
     private String cidade;
     private String estado;
+    
+    @Column(name = "ponto_referencia")
     private String pontoReferencia;
 
     // --- Campos SaaS ---
@@ -40,7 +45,7 @@ public class Tenant {
     private Integer unidadesTotal;
 
     @Column(name = "blocos_total")
-    private Integer blocos; // [NOVO]
+    private Integer blocos; // Mapeia para a coluna 'blocos_total' do banco
 
     @ManyToOne
     @JoinColumn(name = "plano_id")
@@ -60,7 +65,7 @@ public class Tenant {
     @Column(name = "kiwify_transaction_id")
     private String kiwifyTransactionId;
 
-    @Column(name = "status_assinatura") 
+    @Column(name = "status_assinatura")
     private String statusAssinatura;
 
     @Column(name = "data_expiracao_plano")
@@ -72,6 +77,12 @@ public class Tenant {
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) createdAt = LocalDateTime.now();
+        if (updatedAt == null) updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
     }
 
     public boolean isSubscriptionActive() {

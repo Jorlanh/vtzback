@@ -1,6 +1,8 @@
 package com.votzz.backend.controller;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonProperty;
+import com.votzz.backend.domain.AuditLog;
 import com.votzz.backend.domain.Coupon;
 import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.dto.AdminDashboardStats;
@@ -40,6 +42,11 @@ public class AdminController {
 
     @GetMapping("/coupons")
     public ResponseEntity<List<Coupon>> listCoupons() { return ResponseEntity.ok(adminService.listAllCoupons()); }
+
+    @GetMapping("/audit-logs")
+    public ResponseEntity<List<AuditLog>> getAuditLogs() {
+        return ResponseEntity.ok(adminService.listAuditLogs());
+    }
 
     // --- POSTs ---
     @PostMapping("/coupons")
@@ -81,7 +88,6 @@ public class AdminController {
         return ResponseEntity.ok("Palavra-chave alterada.");
     }
 
-    // --- ATUALIZAÇÃO DE USUÁRIO (CORRIGIDO) ---
     @PutMapping("/users/{userId}")
     public ResponseEntity<String> updateUser(@PathVariable UUID userId, @RequestBody UpdateUserRequest req) {
         adminService.adminUpdateUser(userId, req);
@@ -116,26 +122,24 @@ public class AdminController {
     ) {}
 
     public record CreateUserRequest(
-        String tenantId, String nome, String email, String password, String role, 
-        String cpf, String whatsapp, String unidade, String bloco
+        @JsonProperty("tenantId") String tenantId, 
+        @JsonProperty("nome") String nome, 
+        @JsonProperty("email") String email, 
+        @JsonProperty("password") String password, 
+        @JsonProperty("role") String role, 
+        @JsonProperty("cpf") String cpf, 
+        @JsonProperty("whatsapp") String whatsapp, 
+        @JsonProperty("unidade") String unidade, 
+        @JsonProperty("bloco") String bloco
     ) {}
 
-    // --- DTO CORRIGIDO COM ALIAS PARA EVITAR ERROS DE NOME ---
+    // --- ADICIONEI O CAMPO 'role' AQUI ---
     public record UpdateUserRequest(
-        // Aceita se o front enviar "nome", "nomeCompleto" ou "name"
-        @JsonAlias({"name", "nomeCompleto", "fullName"}) 
-        String nome, 
-        
-        String email, 
-        
-        String cpf, 
-        
-        // Aceita se o front enviar "whatsapp", "phone" ou "celular"
-        @JsonAlias({"phone", "celular", "mobile"}) 
-        String whatsapp, 
-        
-        // Aceita "password", "senha", "newPassword"
-        @JsonAlias({"password", "senha"}) 
-        String newPassword
+        @JsonProperty("nome") @JsonAlias({"name", "nomeCompleto", "fullName"}) String nome, 
+        @JsonProperty("email") String email, 
+        @JsonProperty("cpf") String cpf, 
+        @JsonProperty("whatsapp") @JsonAlias({"phone", "celular", "mobile", "zap"}) String whatsapp, 
+        @JsonProperty("role") String role, 
+        @JsonProperty("newPassword") @JsonAlias({"password", "senha"}) String newPassword
     ) {}
 }

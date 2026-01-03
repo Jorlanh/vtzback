@@ -3,7 +3,7 @@ package com.votzz.backend.domain;
 import com.votzz.backend.domain.enums.Role;
 import jakarta.persistence.*;
 import lombok.Data;
-import lombok.EqualsAndHashCode;
+import lombok.NoArgsConstructor;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
@@ -14,10 +14,14 @@ import java.util.List;
 import java.util.UUID;
 
 @Data
+@NoArgsConstructor
 @Entity
 @Table(name = "users")
-@EqualsAndHashCode(callSuper = true)
-public class User extends BaseEntity implements UserDetails {
+public class User implements UserDetails {
+
+    @Id
+    @GeneratedValue(strategy = GenerationType.UUID)
+    private UUID id;
 
     @Column(nullable = false)
     private String nome;
@@ -30,25 +34,49 @@ public class User extends BaseEntity implements UserDetails {
 
     @Column(unique = true)
     private String cpf;
-    
+
+    private String whatsapp;
     private String unidade;
-    
     private String bloco;
+
+    // --- CORREÇÃO CRÍTICA AQUI ---
+    // Removi 'insertable = false, updatable = false'. 
+    // Agora o Hibernate vai SALVAR o ID do condomínio no banco.
+    @ManyToOne(fetch = FetchType.EAGER) 
+    @JoinColumn(name = "tenant_id")     
+    private Tenant tenant;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
-    private Role role; 
+    private Role role;
 
-    private String whatsapp;
+    @Column(name = "is_2fa_enabled")
+    private boolean is2faEnabled = false;
+
+    @Column(name = "secret_2fa")
+    private String secret2fa;
 
     @Column(name = "last_seen")
     private LocalDateTime lastSeen;
 
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
-    private Tenant tenant;
+    @Column(name = "created_at", updatable = false)
+    private LocalDateTime createdAt;
 
-    // --- CORREÇÃO CRÍTICA PARA O ERRO 403 ---
+    @Column(name = "updated_at")
+    private LocalDateTime updatedAt;
+
+    @PrePersist
+    protected void onCreate() {
+        if (createdAt == null) createdAt = LocalDateTime.now();
+        if (updatedAt == null) updatedAt = LocalDateTime.now();
+    }
+
+    @PreUpdate
+    protected void onUpdate() {
+        updatedAt = LocalDateTime.now();
+    }
+
+    // --- SUA LÓGICA DE PERMISSÃO ---
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         // Retorna exatamente "ADMIN" (sem ROLE_) para bater com .hasAuthority("ADMIN")

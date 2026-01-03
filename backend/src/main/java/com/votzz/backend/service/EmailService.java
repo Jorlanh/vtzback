@@ -16,7 +16,8 @@ public class EmailService {
     @Autowired(required = false)
     private SimpleEmailServiceMailSender mailSender;
 
-    @Value("${aws.ses.sender-email:no-reply@votzz.com}")
+    // CORREÇÃO: Pega o e-mail do application.properties
+    @Value("${aws.ses.sender-email}") 
     private String senderEmail;
 
     public void sendSimpleEmail(String to, String subject, String content) {
