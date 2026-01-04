@@ -1,5 +1,6 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore; // <--- IMPORT ESSENCIAL
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -16,7 +17,7 @@ public class AuditLog {
     @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
-    private String timestamp;
+    private String timestamp;    
     private String action;
     
     @Column(name = "user_id")
@@ -25,11 +26,13 @@ public class AuditLog {
     @Column(name = "user_name")
     private String userName;     
     
-    // --- ESTE É O CAMPO QUE ESTÁ FALTANDO ---
+    // --- CORREÇÃO DEFINITIVA AQUI ---
+    // O @JsonIgnore impede que o Jackson tente ler o Proxy do Hibernate
+    // Isso ELIMINA o erro "ByteBuddyInterceptor" e o 400 Bad Request.
+    @JsonIgnore 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id")
     private Tenant tenant;
-    // ----------------------------------------
 
     @Column(columnDefinition = "TEXT") 
     private String details;      

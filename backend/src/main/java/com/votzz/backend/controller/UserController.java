@@ -1,5 +1,6 @@
 package com.votzz.backend.controller;
 
+import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.repository.UserRepository;
@@ -19,20 +20,33 @@ import java.util.UUID;
 @CrossOrigin(origins = "*")
 public class UserController {
 
-    @Autowired private UserRepository userRepository;
-    @Autowired private PasswordEncoder passwordEncoder;
-    @Autowired private AuditService auditService; 
+    @Autowired
+    private UserRepository userRepository;
 
+    @Autowired
+    private PasswordEncoder passwordEncoder;
+
+    @Autowired
+    private AuditService auditService; 
+
+    // --- CRIAR NOVO USUÁRIO ---
     @PostMapping
     @Transactional
     public ResponseEntity<?> createUser(@RequestBody UserDTO data, @AuthenticationPrincipal User currentUser) {
         if (currentUser.getTenant() == null) {
             return ResponseEntity.status(403).body("Você precisa estar vinculado a um condomínio.");
         }
+
         if (userRepository.findByEmail(data.email()).isPresent()) {
             return ResponseEntity.badRequest().body("Email já cadastrado.");
         }
         
+        if (data.cpf() != null && !data.cpf().isEmpty()) {
+             boolean cpfExists = userRepository.findAll().stream()
+                 .anyMatch(u -> data.cpf().equals(u.getCpf()));
+             if(cpfExists) return ResponseEntity.badRequest().body("CPF já cadastrado no sistema.");
+        }
+
         User newUser = new User();
         newUser.setNome(data.nome());
         newUser.setEmail(data.email());
@@ -40,7 +54,7 @@ public class UserController {
         newUser.setWhatsapp(data.whatsapp());
         newUser.setUnidade(data.unidade());
         newUser.setBloco(data.bloco());
-        newUser.setTenant(currentUser.getTenant()); // Tenant do criador
+        newUser.setTenant(currentUser.getTenant());
         
         if ((currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO) && data.role() != null) {
             try { newUser.setRole(Role.valueOf(data.role())); } catch (Exception e) { newUser.setRole(Role.MORADOR); }
@@ -48,16 +62,27 @@ public class UserController {
             newUser.setRole(Role.MORADOR);
         }
 
-        newUser.setPassword(passwordEncoder.encode(data.password() != null && !data.password().isBlank() ? data.password() : "votzz123"));
+        if (data.password() != null && !data.password().isBlank()) {
+            newUser.setPassword(passwordEncoder.encode(data.password()));
+        } else {
+            newUser.setPassword(passwordEncoder.encode("votzz123"));
+        }
+
         userRepository.save(newUser);
 
-        // --- CORREÇÃO: Passando o tenant ALVO ---
-        auditService.log(currentUser, newUser.getTenant(), "CRIAR_USUARIO", 
-            "Criou usuário " + newUser.getNome() + " (Unidade: " + newUser.getUnidade() + ")", "USUARIOS");
+        // --- CORREÇÃO: Passando currentUser.getTenant() como targetTenant ---
+        auditService.log(
+            currentUser, 
+            currentUser.getTenant(), // targetTenant
+            "CRIAR_USUARIO", 
+            "Criou o usuário " + newUser.getNome() + " (Unidade: " + newUser.getUnidade() + ")", 
+            "USUARIOS"
+        );
 
         return ResponseEntity.ok("Usuário criado com sucesso!");
     }
 
+    // --- ATUALIZAR USUÁRIO ---
     @PatchMapping("/{id}")
     @Transactional
     public ResponseEntity<?> updateUser(@PathVariable UUID id, @RequestBody UserDTO data, @AuthenticationPrincipal User currentUser) {
@@ -71,25 +96,35 @@ public class UserController {
     }
 
     private ResponseEntity<?> processUpdate(UUID id, UserDTO data, User currentUser) {
-        User user = userRepository.findById(id).orElse(null);
-        if (user == null) return ResponseEntity.notFound().build();
+        var userOptional = userRepository.findById(id);
+        if (userOptional.isEmpty()) return ResponseEntity.notFound().build();
+
+        User user = userOptional.get();
+        StringBuilder changes = new StringBuilder(); 
 
         if (user.getRole() == Role.ADMIN) return ResponseEntity.status(403).body("Ninguém pode alterar o Super Admin.");
 
-        // Se for admin votzz (sem tenant), pode editar. Se for morador, só do mesmo tenant.
+        // Validação de Tenant
         if (currentUser.getTenant() != null && !currentUser.getTenant().getId().equals(user.getTenant().getId())) {
-            return ResponseEntity.status(403).body("Acesso negado a este condomínio.");
+            return ResponseEntity.status(403).body("Você não pode editar usuários de outro condomínio.");
         }
 
-        StringBuilder changes = new StringBuilder();
-
-        if (data.email() != null && !data.email().equals(user.getEmail())) {
+        if (data.email() != null && !data.email().isEmpty() && !data.email().equals(user.getEmail())) {
             user.setEmail(data.email());
             changes.append("Email alterado. ");
         }
-        if (data.whatsapp() != null) user.setWhatsapp(data.whatsapp());
-        if (data.unidade() != null) user.setUnidade(data.unidade());
-        if (data.bloco() != null) user.setBloco(data.bloco());
+        if (data.whatsapp() != null && !data.whatsapp().equals(user.getWhatsapp())) {
+            user.setWhatsapp(data.whatsapp());
+            changes.append("WhatsApp alterado. ");
+        }
+        if (data.unidade() != null && !data.unidade().equals(user.getUnidade())) {
+            user.setUnidade(data.unidade());
+            changes.append("Unidade mudou para " + data.unidade() + ". ");
+        }
+        if (data.bloco() != null && !data.bloco().equals(user.getBloco())) {
+            user.setBloco(data.bloco());
+            changes.append("Bloco mudou para " + data.bloco() + ". ");
+        }
 
         if (data.role() != null && (currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO)) {
             try {
@@ -109,9 +144,15 @@ public class UserController {
         userRepository.save(user);
 
         if (!changes.isEmpty()) {
-            // --- CORREÇÃO: Passando o tenant do usuário editado ---
-            auditService.log(currentUser, user.getTenant(), "EDITAR_USUARIO", 
-                "Em " + user.getNome() + ": " + changes.toString(), "USUARIOS");
+            // --- CORREÇÃO: Passando user.getTenant() como targetTenant ---
+            // Se for Admin Votzz (sem tenant), o log vai para o tenant do usuário editado
+            auditService.log(
+                currentUser, 
+                user.getTenant(), // targetTenant
+                "EDITAR_USUARIO", 
+                "Alterações em " + user.getNome() + ": " + changes.toString(), 
+                "USUARIOS"
+            );
         }
 
         return ResponseEntity.ok("Dados atualizados.");
@@ -123,7 +164,10 @@ public class UserController {
             if (currentUser.getRole() == Role.ADMIN) return ResponseEntity.ok(userRepository.findAll());
             return ResponseEntity.ok(List.of());
         }
-        return ResponseEntity.ok(userRepository.findByTenantId(currentUser.getTenant().getId()));
+        List<User> users = userRepository.findAll().stream()
+                .filter(u -> u.getTenant() != null && u.getTenant().getId().equals(currentUser.getTenant().getId()))
+                .toList();
+        return ResponseEntity.ok(users);
     }
     
     @PatchMapping("/{id}/role")
@@ -134,7 +178,16 @@ public class UserController {
         if("MANAGER".equals(newRoleStr) || "ADM_CONDO".equals(newRoleStr)) {
             user.setRole(Role.ADM_CONDO); 
             userRepository.save(user);
-            auditService.log(currentUser, user.getTenant(), "PROMOVER_USUARIO", "Promoveu " + user.getNome() + " a Admin", "USUARIOS");
+            
+            // --- CORREÇÃO: Passando user.getTenant() como targetTenant ---
+            auditService.log(
+                currentUser, 
+                user.getTenant(), // targetTenant
+                "PROMOVER_USUARIO", 
+                "Promoveu " + user.getNome() + " a Admin", 
+                "USUARIOS"
+            );
+            
             return ResponseEntity.ok().build();
         }
         return ResponseEntity.badRequest().build();

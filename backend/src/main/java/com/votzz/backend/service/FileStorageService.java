@@ -3,62 +3,60 @@ package com.votzz.backend.service;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
+import software.amazon.awssdk.core.sync.RequestBody;
+import software.amazon.awssdk.regions.Region;
+import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
+import jakarta.annotation.PostConstruct;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 import java.util.UUID;
 
 @Service
 public class FileStorageService {
 
-    // Lê a URL do application.properties
-    @Value("${votzz.storage.public-url}")
-    private String storagePublicUrl;
+    // --- CORREÇÃO: Mapeando exatamente as chaves do seu application.properties ---
+    
+    @Value("${spring.cloud.aws.credentials.access-key}")
+    private String accessKey;
 
-    // Diretório local onde os arquivos serão salvos
-    private final Path fileStorageLocation;
+    @Value("${spring.cloud.aws.credentials.secret-key}")
+    private String secretKey;
 
-    public FileStorageService() {
-        this.fileStorageLocation = Paths.get("uploads").toAbsolutePath().normalize();
-        try {
-            Files.createDirectories(this.fileStorageLocation);
-        } catch (Exception ex) {
-            throw new RuntimeException("Não foi possível criar o diretório para upload de arquivos.", ex);
-        }
+    @Value("${spring.cloud.aws.region.static}")
+    private String region;
+
+    @Value("${aws.s3.bucket-name}")
+    private String bucketName;
+
+    private S3Client s3Client;
+
+    @PostConstruct
+    public void init() {
+        // Inicializa o cliente S3
+        this.s3Client = S3Client.builder()
+                .region(Region.of(region))
+                .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
+                .build();
     }
 
-    /**
-     * Salva o arquivo localmente e retorna uma URL (configurada no properties).
-     */
-    public String storeFile(MultipartFile file) {
-        // 1. Gera um nome único para evitar conflito (UUID + Nome Original)
-        String originalName = file.getOriginalFilename();
-        if (originalName == null) originalName = "arquivo_sem_nome.pdf";
-        
-        // Remove caracteres perigosos do nome
-        String cleanName = originalName.replaceAll("[^a-zA-Z0-9\\.\\-_]", "_");
-        String fileName = UUID.randomUUID().toString() + "_" + cleanName;
+    public String uploadFile(MultipartFile file) throws IOException {
+        // Gera um nome único
+        String fileName = "areas/" + UUID.randomUUID() + "_" + file.getOriginalFilename();
 
-        try {
-            // 2. Salva o arquivo na pasta 'uploads' (Local)
-            Path targetLocation = this.fileStorageLocation.resolve(fileName);
-            Files.copy(file.getInputStream(), targetLocation, StandardCopyOption.REPLACE_EXISTING);
+        PutObjectRequest putOb = PutObjectRequest.builder()
+                .bucket(bucketName)
+                .key(fileName)
+                .contentType(file.getContentType())
+                .acl("public-read") // Torna público
+                .build();
 
-            /* * --- LÓGICA FUTURA PARA AWS S3 ---
-             * * s3Template.upload("votzz-bucket", fileName, file.getInputStream());
-             * * Nesse caso, a URL base no properties seria a do bucket S3
-             */
+        // Envia para a AWS (Vai falhar aqui se a chave for 'fake-key')
+        s3Client.putObject(putOb, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
 
-            // 3. Retorna a URL montada dinamicamente com base no properties
-            // Garante que a URL base termina com / antes de concatenar
-            String baseUrl = storagePublicUrl.endsWith("/") ? storagePublicUrl : storagePublicUrl + "/";
-            return baseUrl + fileName;
-
-        } catch (IOException ex) {
-            throw new RuntimeException("Não foi possível armazenar o arquivo " + fileName + ". Tente novamente!", ex);
-        }
+        // Retorna a URL pública
+        return String.format("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, fileName);
     }
 }

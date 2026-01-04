@@ -72,8 +72,8 @@ public class FinancialController {
         if (user.getTenant() == null) return ResponseEntity.badRequest().body("Usuário sem condomínio.");
 
         try {
-            // 1. Salva arquivo e pega URL
-            String fileUrl = fileStorageService.storeFile(file); 
+            // CORREÇÃO AQUI: Chama o método 'uploadFile' do serviço S3 (não mais 'storeFile')
+            String fileUrl = fileStorageService.uploadFile(file); 
 
             // 2. Salva no banco
             FinancialReport report = new FinancialReport();
@@ -87,6 +87,7 @@ public class FinancialController {
 
             return ResponseEntity.ok("Relatório salvo com sucesso!");
         } catch (Exception e) {
+            e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro ao salvar relatório: " + e.getMessage());
         }
     }

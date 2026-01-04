@@ -7,9 +7,9 @@ import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     
-    // Usado por Síndicos
+    // Busca logs filtrando pelo ID do condomínio (Mais seguro e simples)
     List<AuditLog> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
     
-    // Usado por Admin Global
+    // Busca todos os logs (Para o Admin Global)
     List<AuditLog> findAllByOrderByCreatedAtDesc();
 }

@@ -17,6 +17,7 @@ import java.time.LocalDate;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/tenants")
@@ -44,8 +45,8 @@ public class TenantController {
         }
 
         Tenant tenant = user.getTenant();
+        if (tenant == null) return ResponseEntity.badRequest().body("Usuário sem condomínio vinculado.");
         
-        // Atualiza campos do Tenant
         tenant.setBanco(dto.bankName());
         tenant.setAgencia(dto.agency());
         tenant.setConta(dto.account());
@@ -85,22 +86,39 @@ public class TenantController {
         ));
     }
 
-    // --- ENDPOINT DE AUDITORIA ---
+    // --- ENDPOINT DE AUDITORIA (CORRIGIDO E BLINDADO) ---
     @GetMapping("/audit-logs")
-    public ResponseEntity<List<AuditLog>> getAuditLogs(@AuthenticationPrincipal User user) {
-        // 1. Se for Morador/Síndico/AdmCondo (TEM TENANT)
+    public ResponseEntity<List<AuditLogResponse>> getAuditLogs(@AuthenticationPrincipal User user) {
+        List<AuditLog> logs;
+
+        // 1. Lógica de decisão: Quem pode ver o quê?
         if (user.getTenant() != null) {
-            return ResponseEntity.ok(auditLogRepository.findByTenantIdOrderByCreatedAtDesc(user.getTenant().getId()));
-        }
-        
-        // 2. Se for Admin Votzz (SEM TENANT) - Role.ADMIN
-        if (user.getRole() == Role.ADMIN) {
-            // Retorna TODOS os logs do sistema
-            return ResponseEntity.ok(auditLogRepository.findAllByOrderByCreatedAtDesc());
+            // Se tem condomínio, vê apenas os dele
+            logs = auditLogRepository.findByTenantIdOrderByCreatedAtDesc(user.getTenant().getId());
+        } else if (user.getRole() == Role.ADMIN) {
+            // Se é Admin Geral (sem condomínio), vê tudo
+            logs = auditLogRepository.findAllByOrderByCreatedAtDesc();
+        } else {
+            // Se não é nenhum dos dois, retorna lista vazia (evita erro 400/403)
+            return ResponseEntity.ok(List.of());
         }
 
-        // 3. Fallback: Se não tem tenant e não é admin, retorna lista vazia em vez de erro
-        return ResponseEntity.ok(List.of());
+        // 2. CONVERSÃO MANUAL (DTO):
+        // Isto extrai apenas os dados seguros e ignora o objeto "Tenant" problemático.
+        List<AuditLogResponse> response = logs.stream()
+            .map(log -> new AuditLogResponse(
+                log.getId(),
+                log.getAction(),
+                log.getUserName(),  // Nome do utilizador
+                log.getUserId(),    // ID do utilizador
+                log.getDetails(),
+                log.getTimestamp(),
+                log.getResourceType(),
+                log.getIpAddress()
+            ))
+            .collect(Collectors.toList());
+
+        return ResponseEntity.ok(response);
     }
 
     @PatchMapping("/secret-keyword")
@@ -109,6 +127,8 @@ public class TenantController {
         if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN) return ResponseEntity.status(403).build();
 
         Tenant tenant = user.getTenant();
+        if (tenant == null) return ResponseEntity.badRequest().body("Sem condomínio.");
+
         String newKeyword = payload.get("secretKeyword");
         if (newKeyword == null || newKeyword.length() < 4) return ResponseEntity.badRequest().body("Mínimo 4 caracteres.");
 
@@ -117,6 +137,19 @@ public class TenantController {
         return ResponseEntity.ok("Palavra-chave atualizada.");
     }
 
+    // --- DTOs (Objetos de Transferência de Dados) ---
     public record TenantDTO(UUID id, String nome) {}
     public record BankInfoDTO(String bankName, String agency, String account, String pixKey, String asaasWalletId) {}
+    
+    // Este DTO é a chave para resolver o problema de serialização
+    public record AuditLogResponse(
+        UUID id, 
+        String action, 
+        String userName, 
+        String userId, 
+        String details, 
+        String timestamp, 
+        String resourceType, 
+        String ipAddress
+    ) {}
 }
