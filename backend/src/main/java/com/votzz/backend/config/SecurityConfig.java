@@ -54,7 +54,7 @@ public class SecurityConfig {
                 // Permite OPTIONS para evitar bloqueio de CORS no navegador
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 
-                // Rotas Públicas
+                // Rotas Públicas (Login, Webhooks, Assets)
                 .requestMatchers(
                     "/api/auth/**",
                     "/ws-votzz/**",
@@ -64,11 +64,23 @@ public class SecurityConfig {
                     "/api/payment/webhook/**"
                 ).permitAll()
                 
-                // Rotas Protegidas por Role
+                // --- PERMISSÕES ESPECÍFICAS ---
+                
+                // Super Admin Votzz (Acesso total administrativo)
                 .requestMatchers("/api/admin/**").hasAuthority("ADMIN") 
+                
+                // Afiliados
                 .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
                 
-                // Padrão: exigir autenticação
+                // Gestão do Condomínio (Auditoria, Financeiro, Dados Bancários, etc)
+                // Permitido para: SINDICO, ADM_CONDO e o SUPER ADMIN
+                .requestMatchers("/api/tenants/**", "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
+                
+                // Rotas de Usuário (Listar, Criar Morador) - Aberto a moradores para ver lista ou restrito
+                // Ajuste conforme sua regra. Aqui deixo autenticado geral, mas o Controller filtra.
+                .requestMatchers("/api/users/**").authenticated()
+
+                // Qualquer outra rota exige login
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
@@ -82,7 +94,7 @@ public class SecurityConfig {
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
         
-        // [CORREÇÃO] Usa a lista do application.properties
+        // [CORREÇÃO] Usa a lista do application.properties para flexibilidade
         config.setAllowedOriginPatterns(allowedOrigins); 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token"));

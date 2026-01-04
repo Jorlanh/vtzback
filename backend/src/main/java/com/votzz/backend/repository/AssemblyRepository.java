@@ -10,7 +10,7 @@ import java.util.UUID;
 @Repository
 public interface AssemblyRepository extends JpaRepository<Assembly, UUID> {
     
-    // Busca pelo Enum definido na Entidade
-    List<Assembly> findByStatus(Assembly.StatusAssembly status);
+    // Busca por String simples (Ex: "ENCERRADA", "AGENDADA")
+    List<Assembly> findByStatus(String status);
     
 }

@@ -10,23 +10,33 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 public class ChatMessage extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
-    @ManyToOne
-    @JoinColumn(name = "assembly_id")
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "assembly_id", nullable = false)
     private Assembly assembly;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id")
     private User user;
 
-    @Column(name = "user_name")
-    private String userName;
+    @Column(name = "sender_name") // Mapeia para sender_name no banco
+    private String senderName;
 
+    // Campo auxiliar para compatibilidade com DTOs antigos que usam userName
+    @Transient
+    public String getUserName() {
+        return senderName;
+    }
+
+    public void setUserName(String userName) {
+        this.senderName = userName;
+    }
+
+    @Column(columnDefinition = "TEXT", nullable = false)
     private String content;
 
-    // REMOVIDO: private LocalDateTime timestamp;
-    // O horário da mensagem é o 'createdAt' herdado da BaseEntity
+    private String type; // CHAT, STATUS_UPDATE
 }

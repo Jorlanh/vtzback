@@ -6,15 +6,15 @@ import lombok.EqualsAndHashCode;
 
 @Data
 @Entity
-@Table(name = "poll_options") // <--- CORREÇÃO: O nome no banco é 'poll_options'
+@Table(name = "poll_options")
 @EqualsAndHashCode(callSuper = true)
 public class VoteOption extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assembly_id")
     private Assembly assembly;
 

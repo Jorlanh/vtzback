@@ -7,6 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import lombok.RequiredArgsConstructor;
 import java.time.LocalDateTime;
+import java.math.BigDecimal;
 import java.util.UUID;
 
 @Service
@@ -27,7 +28,7 @@ public class VoteService {
             .orElseThrow(() -> new RuntimeException("Usuário não existe"));
 
         // 2. Validação de Tempo
-        if (LocalDateTime.now().isAfter(assembly.getDataFim())) {
+        if (assembly.getDataFim() != null && LocalDateTime.now().isAfter(assembly.getDataFim())) {
             throw new RuntimeException("Votação encerrada!");
         }
 
@@ -43,11 +44,13 @@ public class VoteService {
         Vote voto = new Vote();
         voto.setAssembly(assembly);
         voto.setUser(user);
-        voto.setOpcaoEscolhida(opcao);
-        voto.setAuditHash(hashAssinatura);
         
-        // CORREÇÃO: Removemos setTimestamp. 
-        // A BaseEntity vai definir o 'createdAt' automaticamente ao salvar.
+        // --- CORREÇÃO: Usando os nomes padronizados ---
+        voto.setOptionId(opcao);
+        voto.setHash(hashAssinatura);
+        
+        // Define um peso padrão caso não tenha lógica de fração ainda
+        voto.setFraction(new BigDecimal("0.0152")); 
 
         return voteRepository.save(voto);
     }

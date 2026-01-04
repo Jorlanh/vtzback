@@ -45,7 +45,7 @@ public class Tenant {
     private Integer unidadesTotal;
 
     @Column(name = "blocos_total")
-    private Integer blocos; // Mapeia para a coluna 'blocos_total' do banco
+    private Integer blocos;
 
     @ManyToOne
     @JoinColumn(name = "plano_id")
@@ -55,12 +55,25 @@ public class Tenant {
     @JoinColumn(name = "afiliado_id")
     private Afiliado afiliado;
 
-    // Integrações
+    // --- INTEGRAÇÕES & DADOS BANCÁRIOS (ATUALIZADO) ---
     @Column(name = "asaas_customer_id")
     private String asaasCustomerId;
 
     @Column(name = "asaas_wallet_id")
     private String asaasWalletId;
+    
+    // Novos campos para o Split/Repasse Manual
+    @Column(name = "banco_nome")
+    private String banco;
+
+    @Column(name = "banco_agencia")
+    private String agencia;
+
+    @Column(name = "banco_conta")
+    private String conta;
+
+    @Column(name = "chave_pix")
+    private String chavePix;
     
     @Column(name = "kiwify_transaction_id")
     private String kiwifyTransactionId;

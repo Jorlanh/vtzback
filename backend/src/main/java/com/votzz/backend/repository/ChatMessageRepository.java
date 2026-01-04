@@ -9,9 +9,6 @@ import java.util.UUID;
 
 @Repository
 public interface ChatMessageRepository extends JpaRepository<ChatMessage, UUID> {
-
-    // --- CORREÇÃO AQUI ---
-    // De: OrderByTimestampAsc
-    // Para: OrderByCreatedAtAsc
+    // Busca mensagens ordenadas pela data de criação (herdada de BaseEntity)
     List<ChatMessage> findByAssemblyIdOrderByCreatedAtAsc(UUID assemblyId);
 }

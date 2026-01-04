@@ -13,9 +13,14 @@ public class WebConfig implements WebMvcConfigurer {
 
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
-        // Registra o interceptor para todas as rotas da API
         registry.addInterceptor(activityInterceptor)
                 .addPathPatterns("/api/**") // Monitora apenas endpoints da API
-                .excludePathPatterns("/api/auth/**"); // Opcional: Não monitorar rotas públicas de auth se não quiser
+                // Exclui rotas que não precisam de log de atividade do usuário
+                .excludePathPatterns(
+                    "/api/auth/**", 
+                    "/api/payment/webhook/**",
+                    "/api/tenants/public-list",
+                    "/error"
+                ); 
     }
 }

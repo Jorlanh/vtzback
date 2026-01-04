@@ -25,7 +25,6 @@ public class ReportService {
     public ByteArrayInputStream generateAuditCsv(UUID assemblyId) {
         List<Vote> votes = voteRepository.findByAssemblyId(assemblyId);
 
-        // Configuração do CSV
         CSVFormat format = CSVFormat.Builder.create(CSVFormat.DEFAULT)
                 .setHeader("NOME", "CPF", "OPÇÃO", "HASH AUDITORIA", "DATA/HORA")
                 .build();
@@ -38,9 +37,9 @@ public class ReportService {
                 csvPrinter.printRecord(
                     vote.getUser().getNome(),
                     maskCpf(vote.getUser().getCpf()),
-                    vote.getOpcaoEscolhida(), 
-                    vote.getAuditHash(),
-                    // AGORA FUNCIONA: Herda de BaseEntity
+                    // --- CORREÇÃO: Usando os nomes padronizados ---
+                    vote.getOptionId(), 
+                    vote.getHash(),
                     vote.getCreatedAt() 
                 );
             }
@@ -54,9 +53,6 @@ public class ReportService {
 
     private String maskCpf(String cpf) {
         if (cpf == null || cpf.length() < 11) return "***";
-        if(cpf.contains(".")) {
-             return "***." + cpf.substring(4, 7) + "." + cpf.substring(8, 11) + "-**";
-        }
         return "***" + cpf.substring(3, 9) + "**";
     }
 }

@@ -1,9 +1,12 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonManagedReference;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 
 @Data
 @Entity
@@ -11,29 +14,33 @@ import java.time.LocalDateTime;
 @EqualsAndHashCode(callSuper = true)
 public class Assembly extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
     @Column(nullable = false)
     private String titulo;
 
-    @Column(name = "description") 
-    private String descricao;
+    @Column(name = "description", columnDefinition = "TEXT") 
+    private String description;
 
-    @Column(name = "data_inicio", nullable = false)
+    @Column(name = "data_inicio")
     private LocalDateTime dataInicio;
 
-    @Column(name = "data_fim", nullable = false)
+    @Column(name = "data_fim")
     private LocalDateTime dataFim;
 
     @Column(name = "link_video_conferencia")
     private String linkVideoConferencia;
 
-    // --- CORREÇÃO: Uso de Enum em vez de String ---
-    @Enumerated(EnumType.STRING)
+    @Column(name = "youtube_live_url")
+    private String youtubeLiveUrl;
+
+    @Column(name = "relatorio_ia_url", columnDefinition = "TEXT")
+    private String relatorioIaUrl;
+
     @Column(name = "status")
-    private StatusAssembly status; 
+    private String status; 
 
     @Column(name = "anexo_url")
     private String anexoUrl;
@@ -50,8 +57,11 @@ public class Assembly extends BaseEntity {
     @Column(name = "vote_privacy")
     private String votePrivacy;
 
-    // --- DEFINIÇÃO DO ENUM ---
-    public enum StatusAssembly {
-        AGENDADA, ABERTA, ENCERRADA, CANCELADA
-    }
+    @OneToMany(mappedBy = "assembly", cascade = CascadeType.ALL, fetch = FetchType.EAGER)
+    @JsonManagedReference 
+    private List<VoteOption> options = new ArrayList<>();
+
+    @OneToMany(mappedBy = "assembly", fetch = FetchType.LAZY)
+    @JsonManagedReference 
+    private List<Vote> votes = new ArrayList<>();
 }
