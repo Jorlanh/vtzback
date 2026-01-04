@@ -2,6 +2,7 @@ package com.votzz.backend.domain;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties; // Importado
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -13,16 +14,18 @@ import java.util.List;
 @Entity
 @Table(name = "assemblies")
 @EqualsAndHashCode(callSuper = true)
+// Ignora os proxies do Hibernate que causam erro na conversão para JSON
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
 public class Assembly extends BaseEntity {
 
-    @ManyToOne(fetch = FetchType.LAZY)
+    // Alterado para EAGER para garantir que o Tenant seja carregado sem erros de proxy
+    @ManyToOne(fetch = FetchType.EAGER) 
     @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
     @Column(nullable = false)
     private String titulo;
 
-    // Garante que o JSON aceite tanto 'description' quanto 'descricao'
     @JsonProperty("description")
     @Column(name = "description", columnDefinition = "TEXT") 
     private String description;
