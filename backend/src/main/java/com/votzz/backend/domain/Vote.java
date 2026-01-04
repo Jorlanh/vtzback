@@ -1,5 +1,6 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonBackReference;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -17,17 +18,16 @@ public class Vote extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assembly_id", nullable = false)
+    @JsonBackReference // ADICIONADO: Corrige o erro "no back reference property found"
     private Assembly assembly;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     private User user;
 
-    // --- CORREÇÃO: Padronizado com o SQL (votes.option_id) ---
     @Column(name = "option_id", nullable = false) 
     private String optionId; 
 
-    // --- CORREÇÃO: Padronizado com o SQL (votes.hash) ---
     @Column(name = "hash") 
     private String hash; 
 

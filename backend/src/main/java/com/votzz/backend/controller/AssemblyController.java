@@ -8,6 +8,8 @@ import com.votzz.backend.repository.UserRepository;
 import com.votzz.backend.repository.VoteRepository;
 import com.votzz.backend.service.AuditService; 
 import lombok.RequiredArgsConstructor;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,42 +27,75 @@ import java.util.UUID;
 @CrossOrigin(origins = "*") 
 public class AssemblyController {
 
+    private static final Logger logger = LoggerFactory.getLogger(AssemblyController.class);
+
     private final AssemblyRepository assemblyRepository;
     private final VoteRepository voteRepository; 
     private final UserRepository userRepository;
     private final AuditService auditService; 
 
     @GetMapping
-    public List<Assembly> getAll() {
-        return assemblyRepository.findAll();
+    public ResponseEntity<?> getAll(@AuthenticationPrincipal User currentUser) {
+        try {
+            if (currentUser == null) {
+                return ResponseEntity.status(401).body("Não autorizado");
+            }
+
+            List<Assembly> lista;
+            // Se for Super Admin Votzz vê tudo, se não, filtra pelo condomínio (Tenant)
+            if (currentUser.getRole().name().equals("ADMIN")) {
+                lista = assemblyRepository.findAll();
+            } else if (currentUser.getTenant() != null) {
+                // Certifique-se de que o método findByTenantId existe no seu AssemblyRepository
+                lista = assemblyRepository.findByTenantId(currentUser.getTenant().getId());
+            } else {
+                return ResponseEntity.badRequest().body("Usuário sem condomínio vinculado.");
+            }
+            
+            return ResponseEntity.ok(lista);
+        } catch (Exception e) {
+            logger.error("Erro ao listar assembleias: ", e);
+            return ResponseEntity.status(400).body("Erro na requisição: " + e.getMessage());
+        }
     }
 
     @PostMapping
+    @Transactional
     public ResponseEntity<?> criarAssembleia(@RequestBody Assembly assembly, @AuthenticationPrincipal User currentUser) {
         try {
-            if (currentUser != null && currentUser.getTenant() != null) {
-                assembly.setTenant(currentUser.getTenant());
-            } else {
-                return ResponseEntity.badRequest().body("Usuário sem condomínio.");
+            if (currentUser == null || currentUser.getTenant() == null) {
+                logger.error("Tentativa de criação sem usuário ou tenant.");
+                return ResponseEntity.status(401).body("Usuário não possui um condomínio vinculado.");
             }
 
+            // Define o tenant da assembleia principal para garantir persistência correta
+            assembly.setTenant(currentUser.getTenant());
+
+            // VINCULAÇÃO MANUAL: Garante que cada VoteOption receba o tenant e a referência da Assembly
+            if (assembly.getOptions() != null) {
+                assembly.getOptions().forEach(option -> {
+                    option.setTenant(currentUser.getTenant());
+                    option.setAssembly(assembly);
+                });
+            }
+
+            // Gerar link automático caso não tenha link ou youtube
             if (assembly.getLinkVideoConferencia() == null || assembly.getLinkVideoConferencia().isEmpty()) {
-                String salaId = UUID.randomUUID().toString();
                 if (assembly.getYoutubeLiveUrl() == null || assembly.getYoutubeLiveUrl().isEmpty()) {
-                    assembly.setLinkVideoConferencia("https://meet.jit.si/votzz-" + salaId);
+                    assembly.setLinkVideoConferencia("https://meet.jit.si/votzz-" + UUID.randomUUID().toString().substring(0, 8));
                 }
             }
 
+            // Fallbacks de segurança para campos obrigatórios
             if (assembly.getStatus() == null) assembly.setStatus("AGENDADA");
             if (assembly.getDataInicio() == null) assembly.setDataInicio(LocalDateTime.now());
-            if (assembly.getDataFim() == null) assembly.setDataFim(LocalDateTime.now().plusDays(1));
+            if (assembly.getDataFim() == null) assembly.setDataFim(LocalDateTime.now().plusDays(2));
 
             Assembly saved = assemblyRepository.save(assembly);
             
-            // --- CORREÇÃO: Passando saved.getTenant() como targetTenant ---
             auditService.log(
                 currentUser, 
-                saved.getTenant(), // targetTenant
+                saved.getTenant(),
                 "CRIAR_ASSEMBLEIA", 
                 "Criou a assembleia: " + saved.getTitulo(), 
                 "ASSEMBLEIA"
@@ -69,8 +104,8 @@ public class AssemblyController {
             return ResponseEntity.ok(saved);
 
         } catch (Exception e) {
-            e.printStackTrace();
-            return ResponseEntity.internalServerError().body("Erro ao criar assembleia.");
+            logger.error("Erro crítico ao criar assembleia: ", e);
+            return ResponseEntity.internalServerError().body("Erro ao processar dados: " + e.getMessage());
         }
     }
 
@@ -87,14 +122,16 @@ public class AssemblyController {
         var assemblyOpt = assemblyRepository.findById(id);
         if (assemblyOpt.isEmpty()) return ResponseEntity.notFound().build();
 
-        if (voteRepository.existsByAssemblyIdAndUserId(id, request.userId())) {
+        // Verifica se o usuário logado (ou o ID enviado) já votou
+        UUID voterId = request.userId() != null ? request.userId() : currentUser.getId();
+        if (voteRepository.existsByAssemblyIdAndUserId(id, voterId)) {
             return ResponseEntity.badRequest().body(Map.of("message", "Você já votou nesta assembleia."));
         }
 
         Vote vote = new Vote();
         vote.setAssembly(assemblyOpt.get());
         
-        User voter = userRepository.findById(request.userId()).orElse(currentUser);
+        User voter = userRepository.findById(voterId).orElse(currentUser);
         vote.setUser(voter);
         
         if (assemblyOpt.get().getTenant() != null) {
@@ -103,21 +140,15 @@ public class AssemblyController {
         
         vote.setOptionId(request.optionId());
         vote.setHash(UUID.randomUUID().toString()); 
-        vote.setFraction(new BigDecimal("0.0152")); 
+        vote.setFraction(new BigDecimal("1.0")); 
 
         voteRepository.save(vote);
 
-        String detalheVoto = "Voto registrado na pauta '" + assemblyOpt.get().getTitulo() + 
-                             "'. Opção: " + request.optionId() + 
-                             ". Morador: " + voter.getNome() + 
-                             " (Bl: " + voter.getBloco() + ", Ap: " + voter.getUnidade() + ")";
-                             
-        // --- CORREÇÃO: Passando assemblyOpt.get().getTenant() como targetTenant ---
         auditService.log(
             voter, 
-            assemblyOpt.get().getTenant(), // targetTenant
+            assemblyOpt.get().getTenant(),
             "VOTO_REGISTRADO", 
-            detalheVoto, 
+            "Voto na pauta: " + assemblyOpt.get().getTitulo(), 
             "VOTACAO"
         );
 
@@ -130,10 +161,9 @@ public class AssemblyController {
             assembly.setStatus("ENCERRADA"); 
             assemblyRepository.save(assembly);
             
-            // --- CORREÇÃO: Passando assembly.getTenant() como targetTenant ---
             auditService.log(
                 currentUser, 
-                assembly.getTenant(), // targetTenant
+                assembly.getTenant(),
                 "ENCERRAR_ASSEMBLEIA", 
                 "Encerrou a assembleia: " + assembly.getTitulo(), 
                 "ASSEMBLEIA"
@@ -141,11 +171,6 @@ public class AssemblyController {
 
             return ResponseEntity.ok(Map.of("message", "Assembleia encerrada com sucesso."));
         }).orElse(ResponseEntity.notFound().build());
-    }
-
-    @GetMapping("/{id}/dossier")
-    public ResponseEntity<String> getDossier(@PathVariable UUID id) {
-        return ResponseEntity.ok("Dossiê Jurídico da Assembleia " + id);
     }
 
     public record VoteRequest(String optionId, UUID userId) {}

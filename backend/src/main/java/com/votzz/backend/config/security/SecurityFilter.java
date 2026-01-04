@@ -35,9 +35,16 @@ public class SecurityFilter extends OncePerRequestFilter {
                 UserDetails user = userRepository.findByEmailOrCpf(login, login).orElse(null);
 
                 if (user != null) {
-                    // [DEBUG] Verifique isso no console se der erro 403
-                    // System.out.println("User Autenticado: " + user.getUsername() + " | Authorities: " + user.getAuthorities());
+                    // Extrai o tenantId do token e coloca no request para o TenantInterceptor usar como fallback
+                    String tenantId = tokenService.extractClaim(token, claims -> {
+                        Object tid = claims.get("tenantId");
+                        return tid != null ? tid.toString() : null;
+                    });
                     
+                    if (tenantId != null) {
+                        request.setAttribute("tenantId", tenantId);
+                    }
+
                     var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
                     SecurityContextHolder.getContext().setAuthentication(authentication);
                 }

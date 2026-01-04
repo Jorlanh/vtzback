@@ -1,8 +1,8 @@
 package com.votzz.backend.config;
 
+import com.votzz.backend.core.tenant.TenantInterceptor;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.context.annotation.Configuration;
-import org.springframework.web.servlet.config.annotation.CorsRegistry;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
@@ -12,8 +12,12 @@ public class WebConfig implements WebMvcConfigurer {
     @Autowired
     private ActivityInterceptor activityInterceptor;
 
+    @Autowired
+    private TenantInterceptor tenantInterceptor;
+
     @Override
     public void addInterceptors(InterceptorRegistry registry) {
+        // Interceptor de Atividade
         registry.addInterceptor(activityInterceptor)
                 .addPathPatterns("/api/**") 
                 .excludePathPatterns(
@@ -21,16 +25,15 @@ public class WebConfig implements WebMvcConfigurer {
                     "/api/payment/webhook/**",
                     "/api/tenants/public-list",
                     "/error"
-                ); 
-    }
+                );
 
-    // --- CORREÇÃO CORS ---
-    @Override
-    public void addCorsMappings(CorsRegistry registry) {
-        registry.addMapping("/**")
-                .allowedOrigins("http://localhost:5173", "http://localhost:3000") // Origens permitidas
-                .allowedMethods("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH")
-                .allowedHeaders("*")
-                .allowCredentials(true);
+        // Interceptor de Tenant (CRUCIAL para Multi-tenancy)
+        registry.addInterceptor(tenantInterceptor)
+                .addPathPatterns("/api/**")
+                .excludePathPatterns(
+                    "/api/auth/**",
+                    "/api/tenants/public-list",
+                    "/error"
+                );
     }
 }

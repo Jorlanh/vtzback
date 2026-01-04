@@ -1,6 +1,7 @@
 package com.votzz.backend.domain;
 
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
@@ -21,6 +22,8 @@ public class Assembly extends BaseEntity {
     @Column(nullable = false)
     private String titulo;
 
+    // Garante que o JSON aceite tanto 'description' quanto 'descricao'
+    @JsonProperty("description")
     @Column(name = "description", columnDefinition = "TEXT") 
     private String description;
 
