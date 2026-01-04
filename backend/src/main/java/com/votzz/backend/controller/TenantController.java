@@ -85,9 +85,22 @@ public class TenantController {
         ));
     }
 
+    // --- ENDPOINT DE AUDITORIA ---
     @GetMapping("/audit-logs")
     public ResponseEntity<List<AuditLog>> getAuditLogs(@AuthenticationPrincipal User user) {
-        return ResponseEntity.ok(auditLogRepository.findAll());
+        // 1. Se for Morador/Síndico/AdmCondo (TEM TENANT)
+        if (user.getTenant() != null) {
+            return ResponseEntity.ok(auditLogRepository.findByTenantIdOrderByCreatedAtDesc(user.getTenant().getId()));
+        }
+        
+        // 2. Se for Admin Votzz (SEM TENANT) - Role.ADMIN
+        if (user.getRole() == Role.ADMIN) {
+            // Retorna TODOS os logs do sistema
+            return ResponseEntity.ok(auditLogRepository.findAllByOrderByCreatedAtDesc());
+        }
+
+        // 3. Fallback: Se não tem tenant e não é admin, retorna lista vazia em vez de erro
+        return ResponseEntity.ok(List.of());
     }
 
     @PatchMapping("/secret-keyword")

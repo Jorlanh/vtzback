@@ -7,9 +7,9 @@ import java.util.UUID;
 
 public interface AuditLogRepository extends JpaRepository<AuditLog, UUID> {
     
-    // CORREÇÃO CRÍTICA:
-    // O nome do método TEM que bater com o nome do campo na classe AuditLog.
-    // Antes estava: ...OrderByTimestampDesc (Errado)
-    // Agora está:   ...OrderByCreatedAtDesc (Certo)
+    // Usado por Síndicos
+    List<AuditLog> findByTenantIdOrderByCreatedAtDesc(UUID tenantId);
+    
+    // Usado por Admin Global
     List<AuditLog> findAllByOrderByCreatedAtDesc();
 }

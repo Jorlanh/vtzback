@@ -2,34 +2,40 @@ package com.votzz.backend.domain;
 
 import jakarta.persistence.*;
 import lombok.Data;
+import lombok.EqualsAndHashCode;
 import java.util.UUID;
 import java.time.LocalDateTime;
 
 @Data
 @Entity
 @Table(name = "audit_logs")
+@EqualsAndHashCode(of = "id")
 public class AuditLog {
+
     @Id
-    @GeneratedValue(strategy = GenerationType.UUID)
+    @GeneratedValue(strategy = GenerationType.AUTO)
     private UUID id;
 
-    // Data/Hora da ação (String ISO-8601 é mais seguro para JSON)
-    private String timestamp;    
-
-    // Nome da ação (ex: CRIAR_USUARIO)
+    private String timestamp;
     private String action;
     
     @Column(name = "user_id")
-    private String userId;       // String para evitar erro de cast com UUID
+    private String userId;       
     
     @Column(name = "user_name")
-    private String userName;     // Nome do admin para exibir na tabela
+    private String userName;     
     
+    // --- ESTE É O CAMPO QUE ESTÁ FALTANDO ---
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
+    private Tenant tenant;
+    // ----------------------------------------
+
     @Column(columnDefinition = "TEXT") 
-    private String details;      // Detalhes da ação em texto
+    private String details;      
     
     @Column(name = "resource_type")
-    private String resourceType; // Ex: "ADMIN_PANEL"
+    private String resourceType; 
 
     @Column(name = "ip_address")
     private String ipAddress;

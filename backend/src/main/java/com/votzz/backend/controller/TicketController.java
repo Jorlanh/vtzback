@@ -6,6 +6,7 @@ import com.votzz.backend.domain.enums.TicketPriority;
 import com.votzz.backend.domain.enums.TicketStatus;
 import com.votzz.backend.repository.TicketMessageRepository;
 import com.votzz.backend.repository.TicketRepository;
+import com.votzz.backend.service.AuditService; // IMPORTADO
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -25,6 +26,7 @@ public class TicketController {
 
     private final TicketRepository ticketRepository;
     private final TicketMessageRepository messageRepository;
+    private final AuditService auditService; // INJETADO PARA AUDITORIA
 
     // --- GET LISTA ---
     @GetMapping
@@ -52,12 +54,23 @@ public class TicketController {
         
         // Padrões iniciais
         ticket.setStatus(TicketStatus.OPEN);
-        ticket.setPriority(TicketPriority.LOW); // Padrão é baixo, Admin altera depois
+        ticket.setPriority(TicketPriority.LOW); 
         
-        return ticketRepository.save(ticket);
+        Ticket savedTicket = ticketRepository.save(ticket);
+
+        // --- AUDITORIA DE CRIAÇÃO ---
+        auditService.log(
+            user,
+            user.getTenant(),
+            "ABRIR_CHAMADO",
+            "Abriu chamado #" + savedTicket.getId() + ": " + savedTicket.getTitle(),
+            "SUPORTE"
+        );
+
+        return savedTicket;
     }
 
-    // --- ATUALIZAR STATUS ---
+    // --- ATUALIZAR STATUS (ASSUMIR, RESOLVER, ENCERRAR) ---
     @PatchMapping("/{id}/status")
     @Transactional
     public ResponseEntity<Ticket> updateStatus(@PathVariable UUID id, @RequestBody StatusUpdateDTO update) {
@@ -69,8 +82,37 @@ public class TicketController {
                 return ResponseEntity.status(403).<Ticket>build();
             }
 
-            ticket.setStatus(update.getStatus());
-            return ResponseEntity.ok(ticketRepository.save(ticket));
+            TicketStatus oldStatus = ticket.getStatus();
+            TicketStatus newStatus = update.getStatus();
+            ticket.setStatus(newStatus);
+            
+            Ticket savedTicket = ticketRepository.save(ticket);
+
+            // --- AUDITORIA DE STATUS (Inteligente) ---
+            String acao = "ATUALIZAR_CHAMADO";
+            String detalhe = "Status alterado de " + oldStatus + " para " + newStatus;
+
+            // Personaliza a mensagem para ficar bonito no dashboard
+            if (newStatus == TicketStatus.IN_PROGRESS) {
+                acao = "ASSUMIR_CHAMADO";
+                detalhe = "Assumiu o atendimento do chamado #" + id;
+            } else if (newStatus == TicketStatus.RESOLVED) {
+                acao = "RESOLVER_CHAMADO";
+                detalhe = "Marcou como resolvido o chamado #" + id;
+            } else if (newStatus == TicketStatus.CLOSED) {
+                acao = "ENCERRAR_CHAMADO";
+                detalhe = "Encerrou o chamado #" + id;
+            }
+
+            auditService.log(
+                user,
+                ticket.getTenant(), // Garante que logs de Admins Votzz apareçam para o síndico
+                acao,
+                detalhe,
+                "SUPORTE"
+            );
+
+            return ResponseEntity.ok(savedTicket);
         }).orElse(ResponseEntity.notFound().build());
     }
 
@@ -81,12 +123,24 @@ public class TicketController {
         User user = getUser();
         
         if (!isManager(user)) {
-            return ResponseEntity.status(403).build(); // Apenas Admin/Síndico
+            return ResponseEntity.status(403).build(); 
         }
 
         return ticketRepository.findById(id).map(ticket -> {
+            TicketPriority oldPriority = ticket.getPriority();
             ticket.setPriority(update.getPriority());
-            return ResponseEntity.ok(ticketRepository.save(ticket));
+            Ticket savedTicket = ticketRepository.save(ticket);
+
+            // --- AUDITORIA DE PRIORIDADE ---
+            auditService.log(
+                user,
+                ticket.getTenant(),
+                "ALTERAR_PRIORIDADE",
+                "Mudou prioridade do chamado #" + id + " de " + oldPriority + " para " + update.getPriority(),
+                "SUPORTE"
+            );
+
+            return ResponseEntity.ok(savedTicket);
         }).orElse(ResponseEntity.notFound().build());
     }
 
@@ -98,7 +152,7 @@ public class TicketController {
         
         Ticket ticket = ticketRepository.findById(id).orElseThrow();
 
-        // Validação: Só participa do chat o dono ou o admin
+        // Validação
         if (!isManager(user) && !ticket.getUserId().equals(user.getId())) {
             return ResponseEntity.status(403).build();
         }
@@ -110,10 +164,21 @@ public class TicketController {
         msg.setSenderName(user.getNome());
         msg.setAdminSender(isManager(user));
         
-        // Opcional: Se morador responde, muda status para IN_PROGRESS ou algo assim
-        // Opcional: Se Admin responde, muda status para WAITING_TENANT
+        TicketMessage savedMsg = messageRepository.save(msg);
 
-        return ResponseEntity.ok(messageRepository.save(msg));
+        // --- AUDITORIA DE RESPOSTA (Opcional, pode gerar muitos logs se o chat for intenso) ---
+        // Se quiser auditar cada resposta, descomente abaixo:
+        /*
+        auditService.log(
+            user,
+            ticket.getTenant(),
+            "RESPONDER_CHAMADO",
+            "Nova mensagem no chamado #" + id,
+            "SUPORTE"
+        );
+        */
+
+        return ResponseEntity.ok(savedMsg);
     }
 
     // --- UTILITÁRIOS ---
@@ -122,10 +187,10 @@ public class TicketController {
     }
 
     private boolean isManager(User user) {
-        return user.getRole() == Role.SINDICO || user.getRole() == Role.ADM_CONDO || user.getRole() == Role.MANAGER;
+        return user.getRole() == Role.SINDICO || user.getRole() == Role.ADM_CONDO || user.getRole() == Role.MANAGER || user.getRole() == Role.ADMIN;
     }
 
-    // DTOs internos para não precisar criar arquivos soltos se não quiser
+    // DTOs internos
     @Data static class StatusUpdateDTO { private TicketStatus status; }
     @Data static class PriorityUpdateDTO { private TicketPriority priority; }
     @Data static class MessageDTO { private String message; }

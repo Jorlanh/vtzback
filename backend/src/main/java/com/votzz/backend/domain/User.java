@@ -40,8 +40,7 @@ public class User implements UserDetails {
     private String bloco;
 
     // --- CORREÇÃO CRÍTICA AQUI ---
-    // Removi 'insertable = false, updatable = false'. 
-    // Agora o Hibernate vai SALVAR o ID do condomínio no banco.
+    // Mantido como você fez: essencial para salvar o usuário vinculado ao condomínio
     @ManyToOne(fetch = FetchType.EAGER) 
     @JoinColumn(name = "tenant_id")     
     private Tenant tenant;
@@ -76,12 +75,18 @@ public class User implements UserDetails {
         updatedAt = LocalDateTime.now();
     }
 
-    // --- SUA LÓGICA DE PERMISSÃO ---
+    // --- LÓGICA DE PERMISSÃO ROBUSTA ---
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
-        // Retorna exatamente "ADMIN" (sem ROLE_) para bater com .hasAuthority("ADMIN")
         if (this.role == null) return List.of();
-        return List.of(new SimpleGrantedAuthority(this.role.name()));
+        
+        // CORREÇÃO: Retorna TANTO "ADMIN" QUANTO "ROLE_ADMIN"
+        // Isso garante que .hasAuthority("ADMIN") e .hasRole("ADMIN") funcionem.
+        // Evita erro 403 se o Spring Security se confundir com os prefixos.
+        return List.of(
+            new SimpleGrantedAuthority(this.role.name()),          // Ex: "ADMIN"
+            new SimpleGrantedAuthority("ROLE_" + this.role.name()) // Ex: "ROLE_ADMIN"
+        );
     }
 
     @Override
