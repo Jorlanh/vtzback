@@ -7,6 +7,7 @@ import com.votzz.backend.repository.AssemblyRepository;
 import com.votzz.backend.repository.UserRepository;
 import com.votzz.backend.repository.VoteRepository;
 import com.votzz.backend.service.AuditService;
+import com.votzz.backend.service.EmailService;
 import com.votzz.backend.core.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
@@ -18,9 +19,11 @@ import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/api/assemblies")
@@ -34,6 +37,7 @@ public class AssemblyController {
     private final VoteRepository voteRepository; 
     private final UserRepository userRepository;
     private final AuditService auditService; 
+    private final EmailService emailService;
 
     @GetMapping
     public ResponseEntity<?> getAll(@AuthenticationPrincipal User currentUser) {
@@ -43,15 +47,11 @@ public class AssemblyController {
                 return ResponseEntity.status(401).body("Não autorizado");
             }
 
-            // Prioridade 1: ADMIN vê tudo
             if (currentUser.getRole() != null && currentUser.getRole().name().equals("ADMIN")) {
                 return ResponseEntity.ok(assemblyRepository.findAll());
             }
 
-            // Prioridade 2: Buscar Tenant ID do Contexto (Header X-Tenant-ID)
             UUID tenantId = TenantContext.getTenant();
-            
-            // Prioridade 3: Fallback para o Tenant do objeto User
             if (tenantId == null && currentUser.getTenant() != null) {
                 tenantId = currentUser.getTenant().getId();
             }
@@ -84,7 +84,6 @@ public class AssemblyController {
                 return ResponseEntity.badRequest().body("Não foi possível identificar o condomínio.");
             }
 
-            // Vincula o Tenant do usuário à assembleia
             assembly.setTenant(currentUser.getTenant());
 
             if (assembly.getOptions() != null) {
@@ -106,6 +105,26 @@ public class AssemblyController {
 
             Assembly saved = assemblyRepository.save(assembly);
             auditService.log(currentUser, saved.getTenant(), "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
+
+            // --- NOTIFICAÇÃO POR E-MAIL AUTOMÁTICA ---
+            try {
+                List<User> residents = userRepository.findByTenantId(tenantId);
+                List<String> emails = residents.stream()
+                        .map(User::getEmail)
+                        .filter(email -> email != null && !email.isEmpty())
+                        .collect(Collectors.toList());
+
+                if (!emails.isEmpty()) {
+                    DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+                    String dataFormatada = saved.getDataInicio().format(formatter);
+                    
+                    // Dispara notificação via SES
+                    emailService.sendNewAssemblyNotification(emails, saved.getTitulo(), dataFormatada);
+                    logger.info("Notificação de nova assembleia enviada para {} e-mails no tenant {}", emails.size(), tenantId);
+                }
+            } catch (Exception e) {
+                logger.error("Falha ao processar notificações por e-mail: {}", e.getMessage());
+            }
             
             return ResponseEntity.ok(saved);
         } catch (Exception e) {
