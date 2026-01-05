@@ -1,27 +1,27 @@
 package com.votzz.backend.domain;
 
 import com.fasterxml.jackson.annotation.JsonBackReference;
-import com.fasterxml.jackson.annotation.JsonIgnore; // <--- Importante
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
-import lombok.ToString; // <--- Importante para evitar loop no log
+import lombok.ToString;
 
 @Data
 @Entity
-@Table(name = "poll_options")
+@Table(name = "poll_options_assembly") // <--- AQUI ESTAVA O ERRO (MUDE PARA poll_options_assembly)
 @EqualsAndHashCode(callSuper = true)
 public class VoteOption extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "tenant_id")
-    @JsonIgnore // <--- OBRIGATÓRIO: Corta o peso do JSON. A assembleia já tem o tenant.
-    @ToString.Exclude // Evita loop se você usar System.out.println
+    @JsonIgnore
+    @ToString.Exclude
     private Tenant tenant;
 
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "assembly_id")
-    @JsonBackReference // Mantém isso para evitar o loop Assembly <-> Option
+    @JsonBackReference
     @ToString.Exclude
     private Assembly assembly;
 

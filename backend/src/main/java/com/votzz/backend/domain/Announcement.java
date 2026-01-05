@@ -1,9 +1,10 @@
 package com.votzz.backend.domain;
 
-import com.fasterxml.jackson.annotation.JsonIgnore; // Importante!
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import java.time.LocalDateTime; // Importante
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -15,8 +16,8 @@ import java.util.UUID;
 public class Announcement extends BaseEntity {
 
     @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "tenant_id") 
-    @JsonIgnore // <--- ADICIONE ISSO: Remove o 'tenant' do JSON enviado ao front
+    @JoinColumn(name = "tenant_id")
+    @JsonIgnore
     private Tenant tenant;
 
     @Column(nullable = false)
@@ -25,14 +26,23 @@ public class Announcement extends BaseEntity {
     @Column(columnDefinition = "TEXT")
     private String content;
 
-    private String priority; // NORMAL, HIGH
+    private String priority; 
     private String targetType; 
     private String targetValue; 
 
     private Boolean requiresConfirmation;
 
+    // === NOVOS CAMPOS (Obrigatórios para o Service funcionar) ===
+
+    private LocalDateTime autoArchiveDate; 
+    private Boolean isArchived = false;
+
     @ElementCollection
     @CollectionTable(name = "announcement_reads", joinColumns = @JoinColumn(name = "announcement_id"))
     @Column(name = "user_id")
     private Set<UUID> readBy = new HashSet<>();
+
+    // Esse é o campo que estava faltando e gerando o erro:
+    @Transient
+    private boolean isReadByCurrentUser;
 }
