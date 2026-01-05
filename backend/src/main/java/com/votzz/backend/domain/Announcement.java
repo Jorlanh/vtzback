@@ -1,8 +1,12 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore; // Importante!
 import jakarta.persistence.*;
 import lombok.Data;
 import lombok.EqualsAndHashCode;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.UUID;
 
 @Data
 @Entity
@@ -10,23 +14,25 @@ import lombok.EqualsAndHashCode;
 @EqualsAndHashCode(callSuper = true)
 public class Announcement extends BaseEntity {
 
-    @ManyToOne
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id") 
+    @JsonIgnore // <--- ADICIONE ISSO: Remove o 'tenant' do JSON enviado ao front
     private Tenant tenant;
 
     @Column(nullable = false)
     private String title;
 
+    @Column(columnDefinition = "TEXT")
     private String content;
 
     private String priority; // NORMAL, HIGH
+    private String targetType; 
+    private String targetValue; 
 
-    @Column(name = "target_type")
-    private String targetType; // ALL, OWNER, TENANT
-
-    @Column(name = "requires_confirmation")
     private Boolean requiresConfirmation;
 
-    // REMOVIDO: private LocalDateTime date;
-    // A data do comunicado agora é o 'createdAt' herdado da BaseEntity
+    @ElementCollection
+    @CollectionTable(name = "announcement_reads", joinColumns = @JoinColumn(name = "announcement_id"))
+    @Column(name = "user_id")
+    private Set<UUID> readBy = new HashSet<>();
 }

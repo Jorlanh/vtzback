@@ -1,13 +1,15 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore; // Importante!
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.UUID;
 
 @Data
 @Entity
-// IMPORTANTE: Força o plural 'polls'
 @Table(name = "polls")
 public class Poll {
 
@@ -15,19 +17,36 @@ public class Poll {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(name = "tenant_id")
-    private UUID tenantId;
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "tenant_id")
+    @JsonIgnore // <--- ADICIONE ISSO
+    private Tenant tenant;
 
     private String title;
     
     @Column(columnDefinition = "TEXT")
     private String description;
 
-    private String status; // OPEN, CLOSED
+    private String status; 
+    private String targetAudience; 
 
-    @Column(name = "end_date")
     private LocalDateTime endDate;
-
+    private LocalDateTime createdAt;
+    
     @Column(name = "created_by")
     private UUID createdBy;
+
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "poll_id") 
+    private List<PollOption> options = new ArrayList<>();
+
+    @OneToMany(cascade = CascadeType.ALL, orphanRemoval = true)
+    @JoinColumn(name = "poll_id")
+    private List<PollVote> votes = new ArrayList<>();
+
+    @PrePersist
+    void onCreate() { 
+        createdAt = LocalDateTime.now(); 
+        if (status == null) status = "OPEN";
+    }
 }

@@ -46,7 +46,6 @@ public class EmailService {
 
     /**
      * Notifica todos os moradores sobre uma nova assembleia.
-     * @Async garante que o síndico não fique esperando o envio de centenas de e-mails para ver a tela de sucesso.
      */
     @Async
     public void sendNewAssemblyNotification(List<String> recipients, String title, String date) {
@@ -72,6 +71,26 @@ public class EmailService {
         }
     }
     
+    /**
+     * NOVO MÉTODO: Envia notificações genéricas em massa (Comunicados, Enquetes, etc)
+     */
+    @Async
+    public void sendGenericNotification(List<String> recipients, String subject, String content) {
+        if (recipients == null || recipients.isEmpty()) {
+            log.info("Lista de destinatários vazia para notificação: {}", subject);
+            return;
+        }
+
+        log.info("Iniciando disparo genérico para {} moradores. Assunto: {}", recipients.size(), subject);
+
+        // Adiciona assinatura padrão
+        String fullBody = content + "\n\nAtenciosamente,\nAdministração do Condomínio via Votzz.";
+
+        for (String email : recipients) {
+            sendSimpleEmail(email, subject, fullBody);
+        }
+    }
+
     public void sendResetToken(String to, String token) {
         sendSimpleEmail(to, "Recuperação de Senha - Votzz", "Seu código de recuperação é: " + token);
     }

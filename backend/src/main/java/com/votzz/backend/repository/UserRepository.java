@@ -24,6 +24,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     // Método para buscar moradores por condomínio (Tenant)
     List<User> findByTenantId(UUID tenantId);
 
+    // --- NOVO MÉTODO (Correção para o erro do GovernanceService) ---
+    long countByTenantId(UUID tenantId);
+
     @Modifying
     @Transactional
     @Query("UPDATE User u SET u.lastSeen = :now WHERE u.email = :email")
