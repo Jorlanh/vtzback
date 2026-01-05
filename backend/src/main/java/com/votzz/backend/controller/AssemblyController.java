@@ -106,7 +106,6 @@ public class AssemblyController {
             Assembly saved = assemblyRepository.save(assembly);
             auditService.log(currentUser, saved.getTenant(), "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
 
-            // --- NOTIFICAÇÃO POR E-MAIL AUTOMÁTICA ---
             try {
                 List<User> residents = userRepository.findByTenantId(tenantId);
                 List<String> emails = residents.stream()
@@ -117,8 +116,6 @@ public class AssemblyController {
                 if (!emails.isEmpty()) {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
                     String dataFormatada = saved.getDataInicio().format(formatter);
-                    
-                    // Dispara notificação via SES
                     emailService.sendNewAssemblyNotification(emails, saved.getTitulo(), dataFormatada);
                     logger.info("Notificação de nova assembleia enviada para {} e-mails no tenant {}", emails.size(), tenantId);
                 }
