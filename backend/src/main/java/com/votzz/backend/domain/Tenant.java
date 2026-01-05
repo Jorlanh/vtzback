@@ -1,5 +1,6 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
 import java.time.LocalDate;
@@ -9,6 +10,7 @@ import java.util.UUID;
 @Data
 @Entity
 @Table(name = "tenants")
+@JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
 public class Tenant {
 
     @Id
@@ -29,7 +31,7 @@ public class Tenant {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
-    // --- ENDEREÇO COMPLETO ---
+    // --- ENDEREÇO ---
     private String cep;
     private String logradouro;
     private String numero;
@@ -47,22 +49,24 @@ public class Tenant {
     @Column(name = "blocos_total")
     private Integer blocos;
 
-    @ManyToOne
+    // CORREÇÃO AQUI: Ignora as propriedades do Proxy do Hibernate
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plano_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
     private Plano plano;
 
-    @ManyToOne
+    @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "afiliado_id")
+    @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"})
     private Afiliado afiliado;
 
-    // --- INTEGRAÇÕES & DADOS BANCÁRIOS (ATUALIZADO) ---
+    // --- INTEGRAÇÕES & DADOS BANCÁRIOS ---
     @Column(name = "asaas_customer_id")
     private String asaasCustomerId;
 
     @Column(name = "asaas_wallet_id")
     private String asaasWalletId;
     
-    // Novos campos para o Split/Repasse Manual
     @Column(name = "banco_nome")
     private String banco;
 

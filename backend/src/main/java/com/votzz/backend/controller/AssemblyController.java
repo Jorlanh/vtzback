@@ -1,6 +1,7 @@
 package com.votzz.backend.controller;
 
 import com.votzz.backend.domain.Assembly;
+import com.votzz.backend.domain.Tenant; // Importante para criar a referência
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.Vote;
 import com.votzz.backend.repository.AssemblyRepository;
@@ -77,35 +78,51 @@ public class AssemblyController {
         try {
             if (currentUser == null) return ResponseEntity.status(401).body("Usuário não autenticado.");
 
+            // 1. Identifica o Tenant correto (Prioridade: Header > Usuário)
             UUID tenantId = TenantContext.getTenant();
-            if (tenantId == null && currentUser.getTenant() != null) tenantId = currentUser.getTenant().getId();
+            if (tenantId == null && currentUser.getTenant() != null) {
+                tenantId = currentUser.getTenant().getId();
+            }
 
             if (tenantId == null) {
                 return ResponseEntity.badRequest().body("Não foi possível identificar o condomínio.");
             }
 
-            assembly.setTenant(currentUser.getTenant());
+            // CORREÇÃO CRÍTICA AQUI:
+            // Em vez de usar currentUser.getTenant(), criamos uma referência ao Tenant do contexto atual.
+            // Isso permite que um síndico crie assembleias para o condominio B enquanto logado no painel B.
+            Tenant targetTenant = new Tenant();
+            targetTenant.setId(tenantId);
+            
+            assembly.setTenant(targetTenant);
 
+            // Garante que as opções de voto fiquem vinculadas ao mesmo tenant da assembleia
             if (assembly.getOptions() != null) {
                 assembly.getOptions().forEach(option -> {
-                    option.setTenant(assembly.getTenant());
+                    option.setTenant(targetTenant);
                     option.setAssembly(assembly);
                 });
             }
 
+            // Gera link Jitsi se não houver link de vídeo
             if (assembly.getLinkVideoConferencia() == null || assembly.getLinkVideoConferencia().isEmpty()) {
                 if (assembly.getYoutubeLiveUrl() == null || assembly.getYoutubeLiveUrl().isEmpty()) {
                     assembly.setLinkVideoConferencia("https://meet.jit.si/votzz-" + UUID.randomUUID().toString().substring(0, 8));
                 }
             }
 
+            // Define padrões se nulo
             if (assembly.getStatus() == null) assembly.setStatus("AGENDADA");
             if (assembly.getDataInicio() == null) assembly.setDataInicio(LocalDateTime.now());
             if (assembly.getDataFim() == null) assembly.setDataFim(LocalDateTime.now().plusDays(2));
 
+            // Salva a assembleia
             Assembly saved = assemblyRepository.save(assembly);
-            auditService.log(currentUser, saved.getTenant(), "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
+            
+            // Log de auditoria usando o tenant correto
+            auditService.log(currentUser, targetTenant, "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
 
+            // Envio de notificações
             try {
                 List<User> residents = userRepository.findByTenantId(tenantId);
                 List<String> emails = residents.stream()

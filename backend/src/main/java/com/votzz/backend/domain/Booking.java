@@ -27,10 +27,10 @@ public class Booking extends BaseEntity {
     // --- Dados do Morador (Snapshot) ---
     private String nome;
     private String cpf;
-    private String unidade; // Este é o campo que o 'setUnit' do controller procura?
+    private String unidade;
     private String bloco;
     
-    // Se o seu código anterior usava "unit" em inglês, mantenha este campo também para compatibilidade:
+    // Mantido para compatibilidade
     private String unit; 
 
     @Column(name = "booking_date")
@@ -42,7 +42,7 @@ public class Booking extends BaseEntity {
     @Column(name = "end_time")
     private String endTime;
     
-    private String status; // PENDING, APPROVED, REJECTED, CANCELLED
+    private String status; // PENDING, UNDER_ANALYSIS, APPROVED, REJECTED, CANCELLED
 
     @Column(name = "total_price")
     private BigDecimal totalPrice;
@@ -52,6 +52,10 @@ public class Booking extends BaseEntity {
     
     @Column(name = "billing_type")
     private String billingType; // PIX, BOLETO
+
+    // --- NOVO CAMPO: URL do Comprovante ---
+    @Column(name = "receipt_url")
+    private String receiptUrl; 
 
     @PrePersist
     public void prePersist() {

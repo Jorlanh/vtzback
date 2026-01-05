@@ -13,8 +13,9 @@ import java.util.UUID;
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, UUID> {
 
-    // Busca reservas ativas (PENDING ou APPROVED) para bloquear o dia
-    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status NOT IN ('CANCELLED', 'REJECTED')")
+    // Busca reservas ativas (PENDING, APPROVED, CONFIRMED) para bloquear o dia inteiro
+    // Se houver QUALQUER reserva não cancelada/rejeitada neste dia para esta área, retorna na lista.
+    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status NOT IN ('CANCELLED', 'REJECTED', 'CANCELED')")
     List<Booking> findActiveBookingsByAreaAndDate(@Param("areaId") UUID areaId, @Param("date") LocalDate date);
 
     // Lista todas as reservas do condomínio (para o síndico)
