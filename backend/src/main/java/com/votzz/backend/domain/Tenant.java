@@ -1,5 +1,6 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -53,6 +54,7 @@ public class Tenant {
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plano_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
+    @JsonIgnore  // <--- ADICIONE ISSO AQUI
     private Plano plano;
 
     @ManyToOne(fetch = FetchType.LAZY)

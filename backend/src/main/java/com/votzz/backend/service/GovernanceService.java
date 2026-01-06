@@ -1,5 +1,7 @@
 package com.votzz.backend.service;
 
+import com.lowagie.text.*;
+import com.lowagie.text.pdf.PdfWriter;
 import com.votzz.backend.domain.*;
 import com.votzz.backend.repository.*;
 import lombok.RequiredArgsConstructor;
@@ -8,11 +10,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.io.ByteArrayInputStream;
-import java.nio.charset.StandardCharsets;
+import java.io.ByteArrayOutputStream;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
+import java.util.List; // Garante que é java.util.List
 import java.util.stream.Collectors;
 
 @Service
@@ -73,7 +76,7 @@ public class GovernanceService {
         List<Announcement> archivedAnn = new ArrayList<>();
         
         for (Announcement a : allAnnouncements) {
-            // Verifica leitura
+            // Verifica leitura (IMPORTANTE: Apenas verifica se o ID está no Set)
             boolean leu = a.getReadBy() != null && a.getReadBy().contains(user.getId());
             a.setReadByCurrentUser(leu);
 
@@ -140,27 +143,23 @@ public class GovernanceService {
         );
     }
 
-    // --- ARQUIVAMENTO AUTOMÁTICO (COM LOG DE AUDITORIA DE LEITURAS) ---
+    // --- ARQUIVAMENTO AUTOMÁTICO ---
     @Scheduled(cron = "0 0 * * * *") 
     @Transactional
     public void runAutoArchiving() {
         LocalDateTime now = LocalDateTime.now();
         
-        // Comunicados
         List<Announcement> allA = announcementRepository.findAll();
         for(Announcement a : allA) {
             if(!Boolean.TRUE.equals(a.getIsArchived()) && a.getAutoArchiveDate() != null && a.getAutoArchiveDate().isBefore(now)) {
                 a.setIsArchived(true);
                 announcementRepository.save(a);
-                
-                // LOG DE AUDITORIA PEDIDO
                 int leituras = (a.getReadBy() != null) ? a.getReadBy().size() : 0;
                 logSystemAction(a.getTenant(), "ARQUIVAR_COMUNICADO_AUTO", 
-                    "Comunicado '" + a.getTitle() + "' arquivado automaticamente. Total de leituras confirmadas: " + leituras);
+                    "Comunicado '" + a.getTitle() + "' arquivado auto. Leituras: " + leituras);
             }
         }
 
-        // Enquetes
         List<Poll> allP = pollRepository.findAll();
         for(Poll p : allP) {
              boolean shouldArchive = !Boolean.TRUE.equals(p.getIsArchived()) && 
@@ -170,15 +169,14 @@ public class GovernanceService {
                 p.setIsArchived(true);
                 p.setStatus("CLOSED");
                 pollRepository.save(p);
-                
                 int votos = (p.getVotes() != null) ? p.getVotes().size() : 0;
                 logSystemAction(p.getTenant(), "ARQUIVAR_ENQUETE_AUTO", 
-                    "Enquete '" + p.getTitle() + "' encerrada automaticamente. Total de votos: " + votos);
+                    "Enquete '" + p.getTitle() + "' encerrada auto. Votos: " + votos);
             }
         }
     }
 
-    // --- CRIAÇÃO & EDIÇÃO (Mantido igual, apenas omitido para brevidade se não houve alteração) ---
+    // --- CRIAÇÃO & EDIÇÃO ---
     @Transactional
     public void createAnnouncement(Announcement ann, User creator) {
         ann.setTenant(creator.getTenant());
@@ -191,13 +189,12 @@ public class GovernanceService {
     @Transactional
     public void createPoll(Poll poll, User creator) {
         poll.setTenant(creator.getTenant());
-        poll.setCreatedBy(creator.getId()); // Garante o criador
+        poll.setCreatedBy(creator.getId());
         pollRepository.save(poll);
         logAction(creator, "CRIAR_ENQUETE", "Nova enquete: " + poll.getTitle());
         notifyAllUsers(creator.getTenant().getId(), "Nova Enquete", "Participe: " + poll.getTitle());
     }
 
-    // ... (Métodos create/update de eventos, update announcement/poll mantidos iguais) ...
     @Transactional
     public void updateAnnouncement(UUID id, Announcement newData, User user) {
         announcementRepository.findById(id).ifPresent(ann -> {
@@ -265,30 +262,6 @@ public class GovernanceService {
         });
     }
 
-    // --- ARQUIVAMENTO MANUAL (COM LOG DE LEITURAS) ---
-    @Transactional
-    public void manualArchiveAnnouncement(UUID id) {
-        Announcement a = announcementRepository.findById(id).orElseThrow();
-        a.setIsArchived(true);
-        announcementRepository.save(a);
-        
-        // Log específico pedido pelo usuário
-        int leituras = (a.getReadBy() != null) ? a.getReadBy().size() : 0;
-        // Precisamos de um user context aqui, mas como é void, vamos tentar pegar do logAction se passado no controller
-        // Assumindo que o controller chama e passa o contexto, mas aqui vamos logar "Sistema" ou adaptar no controller
-        // Para simplificar, vou criar um log genérico de sistema aqui, pois o metodo não recebe user
-        logSystemAction(a.getTenant(), "ARQUIVAR_COMUNICADO_MANUAL", 
-            "Comunicado '" + a.getTitle() + "' arquivado manualmente. Total de leituras: " + leituras);
-    }
-
-    @Transactional
-    public void manualArchivePoll(UUID id) {
-        Poll p = pollRepository.findById(id).orElseThrow();
-        p.setIsArchived(true);
-        p.setStatus("CLOSED");
-        pollRepository.save(p);
-    }
-
     // --- VOTAÇÃO & LEITURA ---
 
     @Transactional
@@ -307,63 +280,103 @@ public class GovernanceService {
             poll.getVotes().add(vote);
             pollRepository.save(poll);
             
-            // LOG DETALHADO PEDIDO: Quem votou e em quê
-            logAction(voter, "VOTAR_ENQUETE", 
-                "Usuário " + voter.getNome() + " registrou voto na enquete: '" + poll.getTitle() + "'");
+            logAction(voter, "VOTAR_ENQUETE", "Votou na enquete: " + poll.getTitle());
         });
     }
 
+    // === CORREÇÃO DA LEITURA DE COMUNICADO ===
+    // Garante que só adiciona se não existir, e SALVA no banco.
     @Transactional
     public void markAnnouncementAsRead(UUID annId, UUID userId) {
-        announcementRepository.findById(annId).ifPresent(a -> {
-            if(a.getReadBy() == null) a.setReadBy(new HashSet<>());
-            a.getReadBy().add(userId);
-            announcementRepository.save(a); // Isso atualiza o count
-        });
-    }
-
-    // --- RELATÓRIOS (DOSSIÊ PDF) ---
-    public ByteArrayInputStream generatePollReportPdf(UUID pollId, User requester) {
-        Poll poll = pollRepository.findById(pollId).orElseThrow();
-        StringBuilder txt = new StringBuilder();
-        DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
-
-        txt.append("=========================================\n");
-        txt.append("      DOSSIÊ DE AUDITORIA - VOTZZ      \n");
-        txt.append("=========================================\n\n");
-        
-        txt.append("DADOS DA MICRO-DECISÃO\n");
-        txt.append("----------------------\n");
-        txt.append("Título: ").append(poll.getTitle()).append("\n");
-        txt.append("Descrição: ").append(poll.getDescription()).append("\n");
-        txt.append("Status Atual: ").append(poll.getStatus()).append("\n");
-        txt.append("Criado em: ").append(poll.getCreatedAt().format(formatter)).append("\n");
-        txt.append("Encerrado em: ").append(poll.getEndDate() != null ? poll.getEndDate().format(formatter) : "Em aberto").append("\n\n");
-
-        txt.append("RESULTADOS DA VOTAÇÃO\n");
-        txt.append("---------------------\n");
-        
-        int totalVotes = (poll.getVotes() != null) ? poll.getVotes().size() : 0;
-        
-        for (PollOption opt : poll.getOptions()) {
-            long count = 0;
-            if(poll.getVotes() != null) {
-                count = poll.getVotes().stream().filter(v -> v.getOptionId().equals(opt.getId())).count();
-            }
-            double percentage = (totalVotes > 0) ? (count * 100.0 / totalVotes) : 0;
-            txt.append(String.format("- %s: %d votos (%.1f%%)\n", opt.getLabel(), count, percentage));
+        Announcement ann = announcementRepository.findById(annId)
+            .orElseThrow(() -> new RuntimeException("Comunicado não encontrado"));
+            
+        if(ann.getReadBy() == null) {
+            ann.setReadBy(new HashSet<>());
         }
         
-        txt.append("\nTotal de votos computados: ").append(totalVotes).append("\n\n");
+        // Só adiciona e salva se o usuário ainda NÃO leu
+        if (!ann.getReadBy().contains(userId)) {
+            ann.getReadBy().add(userId);
+            announcementRepository.save(ann); // Commit no banco
+        }
+    }
+
+    // === CORREÇÃO DA GERAÇÃO DE PDF (PDF REAL) ===
+    public ByteArrayInputStream generatePollReportPdf(UUID pollId, User requester) {
+        Poll poll = pollRepository.findById(pollId).orElseThrow();
         
-        txt.append("REGISTRO DE AUDITORIA\n");
-        txt.append("---------------------\n");
-        txt.append("Relatório gerado por: ").append(requester.getNome()).append("\n");
-        txt.append("Data de geração: ").append(LocalDateTime.now().format(formatter)).append("\n");
-        txt.append("Hash de Integridade: ").append(UUID.randomUUID().toString()).append("\n"); // Simulação de hash
-        
-        logAction(requester, "DOWNLOAD_DOSSIE", "Baixou Dossiê PDF da enquete: " + poll.getTitle());
-        return new ByteArrayInputStream(txt.toString().getBytes(StandardCharsets.UTF_8));
+        Document document = new Document(PageSize.A4);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+
+        try {
+            PdfWriter.getInstance(document, out);
+            document.open();
+
+            // Fontes
+            Font titleFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 18);
+            Font boldFont = FontFactory.getFont(FontFactory.HELVETICA_BOLD, 12);
+            Font normalFont = FontFactory.getFont(FontFactory.HELVETICA, 12);
+            Font smallFont = FontFactory.getFont(FontFactory.COURIER, 10);
+
+            // Cabeçalho
+            Paragraph title = new Paragraph("DOSSIÊ DE AUDITORIA - VOTZZ", titleFont);
+            title.setAlignment(Element.ALIGN_CENTER);
+            document.add(title);
+            document.add(new Paragraph(" "));
+
+            // Dados da Enquete
+            document.add(new Paragraph("DADOS DA MICRO-DECISÃO", boldFont));
+            document.add(new Paragraph("Título: " + poll.getTitle(), normalFont));
+            document.add(new Paragraph("Descrição: " + poll.getDescription(), normalFont));
+            document.add(new Paragraph("Status: " + poll.getStatus(), normalFont));
+            
+            DateTimeFormatter fmt = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+            document.add(new Paragraph("Criado em: " + poll.getCreatedAt().format(fmt), normalFont));
+            
+            if(poll.getEndDate() != null) {
+                document.add(new Paragraph("Vence em: " + poll.getEndDate().format(fmt), normalFont));
+            }
+            
+            document.add(new Paragraph("----------------------------------------------------------------", normalFont));
+            document.add(new Paragraph(" "));
+
+            // Resultados
+            document.add(new Paragraph("RESULTADOS DA VOTAÇÃO", boldFont));
+            int totalVotes = (poll.getVotes() != null) ? poll.getVotes().size() : 0;
+
+            for (PollOption opt : poll.getOptions()) {
+                long count = 0;
+                if (poll.getVotes() != null) {
+                    count = poll.getVotes().stream().filter(v -> v.getOptionId().equals(opt.getId())).count();
+                }
+                double percentage = (totalVotes > 0) ? (count * 100.0 / totalVotes) : 0;
+                
+                String line = String.format("- %s: %d votos (%.1f%%)", opt.getLabel(), count, percentage);
+                document.add(new Paragraph(line, normalFont));
+            }
+            
+            document.add(new Paragraph(" "));
+            document.add(new Paragraph("Total de Votos: " + totalVotes, boldFont));
+            
+            // Rodapé de Auditoria
+            document.add(new Paragraph(" "));
+            document.add(new Paragraph("----------------------------------------------------------------", normalFont));
+            document.add(new Paragraph("REGISTRO DE AUDITORIA", boldFont));
+            document.add(new Paragraph("Gerado por: " + requester.getNome() + " (ID: " + requester.getId() + ")", smallFont));
+            document.add(new Paragraph("Data: " + LocalDateTime.now().format(fmt), smallFont));
+            document.add(new Paragraph("Hash de Integridade: " + UUID.randomUUID().toString(), smallFont));
+
+            document.close();
+            
+            // Loga a ação de download
+            logAction(requester, "DOWNLOAD_DOSSIE", "Baixou Dossiê PDF da enquete: " + poll.getTitle());
+
+        } catch (DocumentException e) {
+            throw new RuntimeException("Erro ao gerar PDF", e);
+        }
+
+        return new ByteArrayInputStream(out.toByteArray());
     }
     
     public Poll getPollById(UUID id) { return pollRepository.findById(id).orElseThrow(); }
