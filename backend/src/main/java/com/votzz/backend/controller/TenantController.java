@@ -9,11 +9,13 @@ import com.votzz.backend.repository.TenantRepository;
 import com.votzz.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -84,6 +86,33 @@ public class TenantController {
             "expirationDate", t.getDataExpiracaoPlano() != null ? t.getDataExpiracaoPlano().toString() : LocalDate.now().plusDays(30).toString(),
             "plan", t.getPlano() != null ? t.getPlano().getNome() : "Básico"
         ));
+    }
+
+    // --- NOVO: DELETE (SOFT DELETE) ---
+    // Apenas Admins devem poder apagar/desativar condomínios
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> deleteTenant(@PathVariable UUID id, @AuthenticationPrincipal User user) {
+        if (user.getRole() != Role.ADMIN) {
+            return ResponseEntity.status(403).body("Acesso negado.");
+        }
+        
+        Tenant tenant = tenantRepository.findById(id).orElse(null);
+        if (tenant == null) return ResponseEntity.notFound().build();
+        
+        tenant.setAtivo(false); // SOFT DELETE
+        tenantRepository.save(tenant);
+        
+        // Log simples
+        AuditLog log = new AuditLog();
+        log.setAction("EXCLUIR_CONDOMINIO");
+        log.setDetails("Soft delete via API em " + tenant.getNome());
+        log.setUserId(user.getId().toString());
+        log.setUserName(user.getNome());
+        log.setResourceType("ADMIN_PANEL");
+        log.setTimestamp(LocalDateTime.now().toString());
+        auditLogRepository.save(log);
+
+        return ResponseEntity.ok().build();
     }
 
     // --- ENDPOINT DE AUDITORIA (CORRIGIDO E BLINDADO) ---

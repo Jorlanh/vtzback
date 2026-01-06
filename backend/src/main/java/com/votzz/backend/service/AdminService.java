@@ -42,10 +42,7 @@ public class AdminService {
     public List<AuditLog> listAuditLogs() {
         return auditLogRepository.findAll().stream()
                 .filter(log -> {
-                    // Mantém se for explicitamente do painel de admin
                     if ("ADMIN_PANEL".equals(log.getResourceType())) return true;
-
-                    // Fallback: Verifica se o usuário que fez a ação é um ADMIN da Votzz
                     try {
                         User actor = userRepository.findById(UUID.fromString(log.getUserId())).orElse(null);
                         return actor != null && actor.getRole() == Role.ADMIN;
@@ -58,7 +55,7 @@ public class AdminService {
                 .collect(Collectors.toList());
     }
 
-    // --- 2: STATS E MRR (Cálculo Robusto) ---
+    // --- 2: STATS E MRR (Cálculo Corrigido) ---
     public AdminDashboardStats getDashboardStats() {
         long totalUsers = userRepository.count();
         long onlineUsers = userRepository.countOnlineUsers(LocalDateTime.now().minusMinutes(5));
@@ -89,7 +86,8 @@ public class AdminService {
             }
         }
 
-        return new AdminDashboardStats(totalUsers, onlineUsers, totalTenants, activeTenants, mrr, 25);
+        // Retorna o DTO com os campos corretos mapeados
+        return new AdminDashboardStats(totalUsers, onlineUsers, totalTenants, activeTenants, mrr);
     }
 
     // --- MÉTODOS DE LISTAGEM ---
@@ -261,6 +259,14 @@ public class AdminService {
 
         tenantRepository.save(tenant);
         if (changed) logAction("EDITAR_CONDOMINIO", detailsLog.toString());
+    }
+
+    @Transactional
+    public void softDeleteTenant(UUID tenantId) {
+        Tenant tenant = tenantRepository.findById(tenantId).orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+        tenant.setAtivo(false); // SOFT DELETE
+        tenantRepository.save(tenant);
+        logAction("EXCLUIR_CONDOMINIO", "Soft Delete (Desativou) condomínio: " + tenant.getNome());
     }
 
     @Transactional
