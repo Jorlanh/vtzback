@@ -31,3 +31,17 @@ build/
 
 ### VS Code ###
 .vscode/
+
+### SEGURANÇA E AMBIENTE ###
+.env
+.env.production
+.env.local
+.env.*
+
+# Ignora configurações específicas de produção que possam ter senhas
+application-prod.properties
+src/main/resources/application-prod.properties
+
+# Logs de erro
+*.log
+logs/
