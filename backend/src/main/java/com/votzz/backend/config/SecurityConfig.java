@@ -45,22 +45,23 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // SEGURANÇA: Desabilita CSRF apenas nos Webhooks e Auth (necessário para APIs Stateless)
-            .csrf(csrf -> csrf.ignoringRequestMatchers("/api/webhooks/**", "/api/auth/**"))
+            // CORREÇÃO: Desabilita CSRF globalmente para permitir POST/PUT/DELETE com JWT
+            .csrf(csrf -> csrf.disable())
+            
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
-                // 1. Prioridade para OPTIONS (Pre-flight do Browser)
+                // 1. Prioridade para OPTIONS
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 
-                // 2. Endpoints PÚBLICOS (Liberados sem Token)
+                // 2. Endpoints PÚBLICOS
                 .requestMatchers(
-                    "/api/auth/**",           // Login e Registro
-                    "/api/webhooks/**",       // Gateways de Pagamento
+                    "/api/auth/**",           
+                    "/api/webhooks/**",       
                     "/api/tenants/public-list",
                     "/api/users/register-resident",
-                    "/ws-votzz/**",           // WebSockets
-                    "/h2-console/**"          // Banco de Dados H2
+                    "/ws-votzz/**",           
+                    "/h2-console/**"          
                 ).permitAll()
 
                 // 3. REGRAS PROTEGIDAS
@@ -70,12 +71,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/tenants/**", "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
                 .requestMatchers("/api/users/**").authenticated()
                 
-                // 4. Fallback para qualquer outra rota
+                // 4. Fallback
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
             
-        // Permite o uso de Frames para o H2 Console
         http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
 
         return http.build();

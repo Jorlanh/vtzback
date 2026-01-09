@@ -2,15 +2,25 @@ package com.votzz.backend.controller;
 
 import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.votzz.backend.config.security.WebSocketEventListener;
 import com.votzz.backend.domain.AuditLog;
 import com.votzz.backend.domain.Coupon;
 import com.votzz.backend.domain.Tenant;
+import com.votzz.backend.domain.User;
+import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.dto.AdminDashboardStats;
+import com.votzz.backend.dto.AuthDTOs.LoginResponse;
 import com.votzz.backend.dto.UserDTO;
+import com.votzz.backend.repository.TenantRepository;
+import com.votzz.backend.repository.UserRepository;
 import com.votzz.backend.service.AdminService;
+import com.votzz.backend.service.TokenService;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.math.BigDecimal;
@@ -27,10 +37,35 @@ import java.util.UUID;
 public class AdminController {
 
     private final AdminService adminService;
+    private final UserRepository userRepository;
+    private final TenantRepository tenantRepository;
+    private final TokenService tokenService;
+    private final WebSocketEventListener webSocketEventListener;
+
+    @Value("${votzz.admin.id}")
+    private String superAdminId;
 
     // --- GETs ---
     @GetMapping("/dashboard-stats")
-    public ResponseEntity<AdminDashboardStats> getStats() { return ResponseEntity.ok(adminService.getDashboardStats()); }
+    public ResponseEntity<AdminDashboardStats> getStats() { 
+        AdminDashboardStats original = adminService.getDashboardStats();
+        
+        // Recria o record com o valor atualizado do WebSocket
+        AdminDashboardStats updated = new AdminDashboardStats(
+            original.totalUsers(),
+            webSocketEventListener.getOnlineCount(), 
+            original.totalTenants(),
+            original.activeTenants(),
+            original.activeAssemblies(),
+            original.engagement(),
+            original.mrr(),
+            original.yearlyVotes(),
+            original.attentionRequired(),
+            original.participationEvolution()
+        );
+        
+        return ResponseEntity.ok(updated); 
+    }
 
     @GetMapping("/organized-users")
     public ResponseEntity<Map<String, Object>> listOrganized() { return ResponseEntity.ok(adminService.listOrganizedUsers()); }
@@ -49,7 +84,70 @@ public class AdminController {
         return ResponseEntity.ok(adminService.listAuditLogs());
     }
 
-    // --- POSTs ---
+    // --- IMPERSONATION (Define Role como SINDICO para acesso total ao painel do condomínio) ---
+    @PostMapping("/impersonate/{tenantId}")
+    public ResponseEntity<?> impersonateTenant(@PathVariable UUID tenantId) {
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+
+        User tempUser = new User();
+        tempUser.setId(UUID.randomUUID()); 
+        tempUser.setEmail("admin-impersonation@votzz.com");
+        tempUser.setNome("Super Admin (Acesso Direto)");
+        // Define como SINDICO para ter permissão total na area do condomínio
+        tempUser.setRole(Role.SINDICO); 
+        tempUser.setTenant(tenant);
+
+        String token = tokenService.generateToken(tempUser);
+
+        return ResponseEntity.ok(new LoginResponse(
+            token, "Bearer", tempUser.getId().toString(), tempUser.getNome(), tempUser.getEmail(),
+            "SINDICO", tenant.getId().toString(), null, null, null
+        ));
+    }
+
+    @PatchMapping("/users/{userId}/toggle-status")
+    public ResponseEntity<String> toggleUserStatus(@PathVariable UUID userId) {
+        if (userId.toString().equals(superAdminId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Você não pode suspender o Super Admin Principal.");
+        }
+        User user = userRepository.findById(userId).orElseThrow();
+        // Garante que o campo enabled não é nulo antes de inverter
+        boolean currentStatus = user.isEnabled(); 
+        user.setEnabled(!currentStatus);
+        userRepository.save(user);
+        return ResponseEntity.ok(user.isEnabled() ? "Usuário ativado." : "Usuário suspenso.");
+    }
+
+    // --- UPDATE USER (Permite editar outros admins) ---
+    @PutMapping("/users/{userId}")
+    public ResponseEntity<?> updateUser(@PathVariable UUID userId, @RequestBody UpdateUserRequest req) {
+        Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
+        
+        if (principal instanceof User currentUser) {
+            boolean isTargetSuperAdmin = userId.toString().equals(superAdminId);
+            boolean isRequesterSuperAdmin = currentUser.getId().toString().equals(superAdminId);
+
+            // Se o alvo for o Super Admin e quem pede NÃO é o Super Admin -> BLOQUEIA
+            if (isTargetSuperAdmin && !isRequesterSuperAdmin) {
+                 return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Apenas o Super Admin pode editar seu próprio perfil.");
+            }
+        }
+
+        adminService.adminUpdateUser(userId, req);
+        return ResponseEntity.ok("Usuário atualizado.");
+    }
+
+    @DeleteMapping("/users/{userId}")
+    public ResponseEntity<?> deleteUser(@PathVariable UUID userId) {
+        if (userId.toString().equals(superAdminId)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("IMPEDIDO: Você não pode deletar o Super Admin Principal.");
+        }
+        adminService.deleteUser(userId);
+        return ResponseEntity.ok("Usuário removido.");
+    }
+
+    // --- OUTROS ENDPOINTS (MANTIDOS) ---
     @PostMapping("/coupons")
     public ResponseEntity<String> createCoupon(@RequestBody CouponDTO dto) {
         adminService.createCoupon(dto.code(), dto.discountPercent(), dto.quantity());
@@ -77,7 +175,6 @@ public class AdminController {
         return ResponseEntity.ok("Usuário adicionado ao condomínio.");
     }
 
-    // --- PUTs / PATCHs ---
     @PutMapping("/tenants/{tenantId}")
     public ResponseEntity<String> updateTenant(@PathVariable UUID tenantId, @RequestBody UpdateTenantDTO dto) {
         adminService.updateTenant(tenantId, dto);
@@ -89,26 +186,13 @@ public class AdminController {
         return ResponseEntity.ok("Palavra-chave alterada.");
     }
 
-    @PutMapping("/users/{userId}")
-    public ResponseEntity<String> updateUser(@PathVariable UUID userId, @RequestBody UpdateUserRequest req) {
-        adminService.adminUpdateUser(userId, req);
-        return ResponseEntity.ok("Usuário atualizado.");
-    }
-
-    // --- DELETEs ---
     @DeleteMapping("/coupons/{id}")
     public ResponseEntity<String> deleteCoupon(@PathVariable UUID id) {
         adminService.deleteCoupon(id);
         return ResponseEntity.ok("Cupom removido.");
     }
 
-    @DeleteMapping("/users/{userId}")
-    public ResponseEntity<String> deleteUser(@PathVariable UUID userId) {
-        adminService.deleteUser(userId);
-        return ResponseEntity.ok("Usuário removido.");
-    }
-
-    // --- DTOs Internos (Records) ---
+    // --- DTOs ---
     public record CouponDTO(String code, BigDecimal discountPercent, Integer quantity) {}
     
     public record ManualTenantDTO(
@@ -117,7 +201,6 @@ public class AdminController {
         String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia
     ) {}
 
-    // ATUALIZADO: Adicionei 'plano' e 'dataExpiracaoPlano'
     public record UpdateTenantDTO(
         String nome, String cnpj, Integer unidadesTotal, Boolean ativo, String secretKeyword,
         String plano, LocalDate dataExpiracaoPlano,

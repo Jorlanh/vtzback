@@ -39,8 +39,7 @@ public class User implements UserDetails {
     private String unidade;
     private String bloco;
 
-    // --- CORREÇÃO CRÍTICA AQUI ---
-    // Mantido como você fez: essencial para salvar o usuário vinculado ao condomínio
+    // Vinculação com Condomínio
     @ManyToOne(fetch = FetchType.EAGER) 
     @JoinColumn(name = "tenant_id")     
     private Tenant tenant;
@@ -48,6 +47,10 @@ public class User implements UserDetails {
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
     private Role role;
+
+    // --- NOVO: Campo para suspensão de conta ---
+    @Column(nullable = false)
+    private boolean enabled = true; 
 
     @Column(name = "is_2fa_enabled")
     private boolean is2faEnabled = false;
@@ -75,14 +78,11 @@ public class User implements UserDetails {
         updatedAt = LocalDateTime.now();
     }
 
-    // --- LÓGICA DE PERMISSÃO ROBUSTA ---
+    // --- LÓGICA DE PERMISSÃO ---
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         if (this.role == null) return List.of();
         
-        // CORREÇÃO: Retorna TANTO "ADMIN" QUANTO "ROLE_ADMIN"
-        // Isso garante que .hasAuthority("ADMIN") e .hasRole("ADMIN") funcionem.
-        // Evita erro 403 se o Spring Security se confundir com os prefixos.
         return List.of(
             new SimpleGrantedAuthority(this.role.name()),          // Ex: "ADMIN"
             new SimpleGrantedAuthority("ROLE_" + this.role.name()) // Ex: "ROLE_ADMIN"
@@ -101,6 +101,7 @@ public class User implements UserDetails {
     @Override
     public boolean isCredentialsNonExpired() { return true; }
 
+    // --- CORREÇÃO: Usa o campo enabled do banco ---
     @Override
-    public boolean isEnabled() { return true; }
+    public boolean isEnabled() { return enabled; }
 }
