@@ -23,23 +23,22 @@ public class User implements UserDetails {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false)
+    @Column(nullable = false) // Removido unique = true
     private String nome;
 
-    @Column(nullable = false, unique = true)
+    @Column(nullable = false) // Removido unique = true
     private String email;
 
     @Column(nullable = false)
     private String password;
 
-    @Column(unique = true)
+    @Column // Removido unique = true
     private String cpf;
 
     private String whatsapp;
     private String unidade;
     private String bloco;
 
-    // Vinculação com Condomínio
     @ManyToOne(fetch = FetchType.EAGER) 
     @JoinColumn(name = "tenant_id")     
     private Tenant tenant;
@@ -48,7 +47,6 @@ public class User implements UserDetails {
     @Column(nullable = false)
     private Role role;
 
-    // --- NOVO: Campo para suspensão de conta ---
     @Column(nullable = false)
     private boolean enabled = true; 
 
@@ -78,14 +76,12 @@ public class User implements UserDetails {
         updatedAt = LocalDateTime.now();
     }
 
-    // --- LÓGICA DE PERMISSÃO ---
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         if (this.role == null) return List.of();
-        
         return List.of(
-            new SimpleGrantedAuthority(this.role.name()),          // Ex: "ADMIN"
-            new SimpleGrantedAuthority("ROLE_" + this.role.name()) // Ex: "ROLE_ADMIN"
+            new SimpleGrantedAuthority(this.role.name()),          
+            new SimpleGrantedAuthority("ROLE_" + this.role.name()) 
         );
     }
 
@@ -101,7 +97,6 @@ public class User implements UserDetails {
     @Override
     public boolean isCredentialsNonExpired() { return true; }
 
-    // --- CORREÇÃO: Usa o campo enabled do banco ---
     @Override
     public boolean isEnabled() { return enabled; }
 }

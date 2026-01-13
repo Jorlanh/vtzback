@@ -1,13 +1,17 @@
 package com.votzz.backend.dto;
 
-import com.votzz.backend.domain.enums.Role;
+import java.util.List;
 import java.util.UUID;
-import java.util.Map;
 
 public class AuthDTOs {
 
-    public record LoginRequest(String login, String password) {}
+    // Request agora aceita ID opcional do perfil
+    public record LoginRequest(String login, String password, String selectedProfileId) {}
 
+    // DTO para as opções de perfil
+    public record ProfileOption(String id, String nome, String role, String tenantName) {}
+
+    // Response atualizado
     public record LoginResponse(
         String token, 
         String type, 
@@ -18,7 +22,9 @@ public class AuthDTOs {
         String tenantId, 
         String bloco, 
         String unidade, 
-        String cpf
+        String cpf,
+        boolean multipleProfiles, // Flag para o front
+        List<ProfileOption> profiles // Lista de contas
     ) {}
 
     public record RegisterCondoRequest(
@@ -29,14 +35,12 @@ public class AuthDTOs {
         Integer qtyBlocks,
         String secretKeyword,
         
-        // Síndico
         String nameSyndic,
         String emailSyndic,
         String cpfSyndic,
         String whatsappSyndic,
         String passwordSyndic,
         
-        // Endereço
         String cep,
         String logradouro,
         String numero,
@@ -55,7 +59,6 @@ public class AuthDTOs {
         String pixImage    
     ) {}
     
-    // MANTIDO: Registro de Morador
     public record ResidentRegisterRequest(
         String nome,
         String email,
@@ -64,11 +67,10 @@ public class AuthDTOs {
         String whatsapp,
         String unidade,
         String bloco,
-        String condoIdentifier, // CNPJ ou Nome do Condomínio
-        String secretKeyword    // Palavra-chave do Condomínio
+        String condoIdentifier, 
+        String secretKeyword    
     ) {}
 
-    // MANTIDOS: Outros DTOs
     public record AffiliateRegisterRequest(String nome, String email, String cpf, String whatsapp, String password, String chavePix, String codigoAfiliado) {}
     public record ChangePasswordRequest(String oldPassword, String newPassword) {}
     public record ResetPasswordRequest(String code, String newPassword) {}

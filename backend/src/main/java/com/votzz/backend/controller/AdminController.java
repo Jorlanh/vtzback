@@ -56,12 +56,7 @@ public class AdminController {
             webSocketEventListener.getOnlineCount(), 
             original.totalTenants(),
             original.activeTenants(),
-            original.activeAssemblies(),
-            original.engagement(),
-            original.mrr(),
-            original.yearlyVotes(),
-            original.attentionRequired(),
-            original.participationEvolution()
+            original.mrr()
         );
         
         return ResponseEntity.ok(updated); 
@@ -84,9 +79,9 @@ public class AdminController {
         return ResponseEntity.ok(adminService.listAuditLogs());
     }
 
-    // --- IMPERSONATION (Define Role como SINDICO para acesso total ao painel do condomínio) ---
+    // --- IMPERSONATION ---
     @PostMapping("/impersonate/{tenantId}")
-    public ResponseEntity<?> impersonateTenant(@PathVariable UUID tenantId) {
+    public ResponseEntity<LoginResponse> impersonateTenant(@PathVariable UUID tenantId) {
         Tenant tenant = tenantRepository.findById(tenantId)
                 .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
 
@@ -100,9 +95,20 @@ public class AdminController {
 
         String token = tokenService.generateToken(tempUser);
 
+        // CORREÇÃO: Usando o construtor completo do LoginResponse
         return ResponseEntity.ok(new LoginResponse(
-            token, "Bearer", tempUser.getId().toString(), tempUser.getNome(), tempUser.getEmail(),
-            "SINDICO", tenant.getId().toString(), null, null, null
+            token, 
+            "Bearer", 
+            tempUser.getId().toString(), 
+            tempUser.getNome(), 
+            tempUser.getEmail(),
+            "SINDICO", 
+            tenant.getId().toString(), 
+            null, 
+            null, 
+            null,
+            false, // multipleProfiles
+            null   // profiles list
         ));
     }
 
@@ -119,7 +125,7 @@ public class AdminController {
         return ResponseEntity.ok(user.isEnabled() ? "Usuário ativado." : "Usuário suspenso.");
     }
 
-    // --- UPDATE USER (Permite editar outros admins) ---
+    // --- UPDATE USER ---
     @PutMapping("/users/{userId}")
     public ResponseEntity<?> updateUser(@PathVariable UUID userId, @RequestBody UpdateUserRequest req) {
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
@@ -128,7 +134,6 @@ public class AdminController {
             boolean isTargetSuperAdmin = userId.toString().equals(superAdminId);
             boolean isRequesterSuperAdmin = currentUser.getId().toString().equals(superAdminId);
 
-            // Se o alvo for o Super Admin e quem pede NÃO é o Super Admin -> BLOQUEIA
             if (isTargetSuperAdmin && !isRequesterSuperAdmin) {
                  return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Apenas o Super Admin pode editar seu próprio perfil.");
             }
@@ -147,7 +152,7 @@ public class AdminController {
         return ResponseEntity.ok("Usuário removido.");
     }
 
-    // --- OUTROS ENDPOINTS (MANTIDOS) ---
+    // --- OUTROS ENDPOINTS ---
     @PostMapping("/coupons")
     public ResponseEntity<String> createCoupon(@RequestBody CouponDTO dto) {
         adminService.createCoupon(dto.code(), dto.discountPercent(), dto.quantity());

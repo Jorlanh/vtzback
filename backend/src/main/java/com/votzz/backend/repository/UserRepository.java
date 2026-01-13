@@ -16,15 +16,17 @@ import java.util.UUID;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     
+    // Busca um único (idealmente o Admin Global ou o primeiro encontrado)
     Optional<User> findByEmailOrCpf(String email, String cpf);
+    
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
     boolean existsByCpf(String cpf);
 
-    // Método para buscar moradores por condomínio (Tenant)
-    List<User> findByTenantId(UUID tenantId);
+    // NOVO: Busca TODOS os usuários com esse login (para o seletor de perfil)
+    List<User> findAllByEmailOrCpf(String email, String cpf);
 
-    // --- NOVO MÉTODO (Correção para o erro do GovernanceService) ---
+    List<User> findByTenantId(UUID tenantId);
     long countByTenantId(UUID tenantId);
 
     @Modifying
