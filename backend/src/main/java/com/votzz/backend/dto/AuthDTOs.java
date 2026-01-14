@@ -5,11 +5,21 @@ import java.util.UUID;
 
 public class AuthDTOs {
 
-    // Request agora aceita ID opcional do perfil
-    public record LoginRequest(String login, String password, String selectedProfileId) {}
+    // Request atualizado com deviceId e trustDevice para a lógica de "Lembrar navegador"
+    public record LoginRequest(
+        String login, 
+        String password, 
+        String selectedProfileId,
+        Integer code2fa, 
+        String deviceId,    // ID do navegador/dispositivo
+        boolean trustDevice // Checkbox "Não pedir novamente por 30 dias"
+    ) {}
 
     // DTO para as opções de perfil
     public record ProfileOption(String id, String nome, String role, String tenantName) {}
+
+    // DTO auxiliar para unidades
+    public record UnitDTO(String bloco, String unidade) {}
 
     // Response atualizado
     public record LoginResponse(
@@ -23,9 +33,14 @@ public class AuthDTOs {
         String bloco, 
         String unidade, 
         String cpf,
-        boolean multipleProfiles, // Flag para o front
-        List<ProfileOption> profiles // Lista de contas
+        boolean multipleProfiles, 
+        boolean requiresTwoFactor, // Flag para avisar o front que precisa do código
+        List<ProfileOption> profiles 
     ) {}
+
+    // NOVOS DTOs PARA O SETUP DO 2FA
+    public record TwoFactorSetupResponse(String secret, String qrCodeUrl) {}
+    public record TwoFactorConfirmRequest(String code) {}
 
     public record RegisterCondoRequest(
         String planId,
@@ -59,14 +74,18 @@ public class AuthDTOs {
         String pixImage    
     ) {}
     
+    // ATUALIZADO: Aceita lista de units
     public record ResidentRegisterRequest(
         String nome,
         String email,
         String password,
         String cpf,
         String whatsapp,
-        String unidade,
+        // Mantemos estes para compatibilidade se o front mandar só um
+        String unidade, 
         String bloco,
+        // Novo campo
+        List<UnitDTO> units, 
         String condoIdentifier, 
         String secretKeyword    
     ) {}

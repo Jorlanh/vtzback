@@ -95,7 +95,7 @@ public class AdminController {
 
         String token = tokenService.generateToken(tempUser);
 
-        // CORREÇÃO: Usando o construtor completo do LoginResponse
+        // CORREÇÃO AQUI: Adicionado o campo 'false' para requiresTwoFactor
         return ResponseEntity.ok(new LoginResponse(
             token, 
             "Bearer", 
@@ -104,10 +104,11 @@ public class AdminController {
             tempUser.getEmail(),
             "SINDICO", 
             tenant.getId().toString(), 
-            null, 
-            null, 
-            null,
+            null, // bloco
+            null, // unidade
+            null, // cpf
             false, // multipleProfiles
+            false, // requiresTwoFactor (NOVO CAMPO ADICIONADO)
             null   // profiles list
         ));
     }

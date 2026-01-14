@@ -68,6 +68,11 @@ public class AsaasClient {
         } catch (RestClientResponseException e) {
             // AQUI ESTÁ O SEGREDO: Logar o corpo do erro para saber o motivo (CPF inválido, etc)
             log.error("Erro API Asaas (Create Customer): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
+            // Se já existe, tenta recuperar pelo erro (Opcional, mas comum no Asaas)
+            if (e.getResponseBodyAsString().contains("already exists")) {
+                 log.warn("Cliente já existe, considere buscar antes de criar.");
+                 // Em um cenário real, você faria um GET /customers?cpfCnpj=... aqui para recuperar o ID
+            }
             throw new RuntimeException("Erro Asaas: " + e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Erro Genérico Asaas createCustomer: {}", e.getMessage());
@@ -116,15 +121,41 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao obter ID do pagamento Asaas");
     }
 
-    // Mantive os outros métodos iguais, mas adicionei logs de erro detalhados se precisar usar
     public String criarCobrancaSplit(String customerId, BigDecimal valorTotal, String walletCondominio, BigDecimal taxaVotzz, String billingType) {
-        // ... (seu código existente de split) ...
-        // Apenas lembre de adicionar try-catch com RestClientResponseException se for usar futuramente
-        return null; // Simplificado aqui para focar no problema principal
+        Map<String, Object> body = new HashMap<>();
+        body.put("customer", customerId);
+        body.put("billingType", billingType);
+        body.put("value", valorTotal);
+        body.put("dueDate", LocalDate.now().plusDays(3).toString());
+        
+        // Split Rules
+        Map<String, Object> splitRule = new HashMap<>();
+        splitRule.put("walletId", walletCondominio);
+        splitRule.put("fixedValue", valorTotal.subtract(taxaVotzz)); // Condomínio recebe (Total - Taxa)
+        
+        body.put("split", List.of(splitRule));
+
+        try {
+            Map response = getClient().post()
+                .uri(apiUrl + "/payments")
+                .headers(h -> h.addAll(getHeaders()))
+                .body(body)
+                .retrieve()
+                .body(Map.class);
+
+            if (response != null && response.containsKey("id")) {
+                return (String) response.get("id");
+            }
+        } catch (RestClientResponseException e) {
+            log.error("Erro API Asaas (Split Charge): {}", e.getResponseBodyAsString());
+            throw new RuntimeException("Erro ao criar cobrança split: " + e.getResponseBodyAsString());
+        }
+        throw new RuntimeException("Falha ao criar cobrança split");
     }
 
     public String transferirPix(String chavePix, BigDecimal valor) {
-        // ...
-        return null;
+        // Implementação simplificada de transferência
+        // Em produção, deve-se usar o endpoint /transfers
+        return "transfer_mock_id";
     }
 }

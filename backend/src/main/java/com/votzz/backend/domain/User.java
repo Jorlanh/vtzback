@@ -23,24 +23,24 @@ public class User implements UserDetails {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
-    @Column(nullable = false) // Removido unique = true
+    @Column(nullable = false)
     private String nome;
 
-    @Column(nullable = false) // Removido unique = true
+    @Column(nullable = false)
     private String email;
 
     @Column(nullable = false)
     private String password;
 
-    @Column // Removido unique = true
+    @Column
     private String cpf;
 
     private String whatsapp;
     private String unidade;
     private String bloco;
 
-    @ManyToOne(fetch = FetchType.EAGER) 
-    @JoinColumn(name = "tenant_id")     
+    @ManyToOne(fetch = FetchType.EAGER)
+    @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
     @Enumerated(EnumType.STRING)
@@ -48,10 +48,11 @@ public class User implements UserDetails {
     private Role role;
 
     @Column(nullable = false)
-    private boolean enabled = true; 
+    private boolean enabled = true;
 
+    // --- CAMPOS 2FA ---
     @Column(name = "is_2fa_enabled")
-    private boolean is2faEnabled = false;
+    private Boolean is2faEnabled = false; // Use Wrapper Boolean para evitar nulos em updates parciais
 
     @Column(name = "secret_2fa")
     private String secret2fa;
@@ -69,6 +70,7 @@ public class User implements UserDetails {
     protected void onCreate() {
         if (createdAt == null) createdAt = LocalDateTime.now();
         if (updatedAt == null) updatedAt = LocalDateTime.now();
+        if (is2faEnabled == null) is2faEnabled = false;
     }
 
     @PreUpdate
@@ -80,8 +82,8 @@ public class User implements UserDetails {
     public Collection<? extends GrantedAuthority> getAuthorities() {
         if (this.role == null) return List.of();
         return List.of(
-            new SimpleGrantedAuthority(this.role.name()),          
-            new SimpleGrantedAuthority("ROLE_" + this.role.name()) 
+            new SimpleGrantedAuthority(this.role.name()),
+            new SimpleGrantedAuthority("ROLE_" + this.role.name())
         );
     }
 
@@ -99,4 +101,13 @@ public class User implements UserDetails {
 
     @Override
     public boolean isEnabled() { return enabled; }
+    
+    // Getter manual para garantir compatibilidade se o Lombok falhar no boolean 'is'
+    public Boolean getIs2faEnabled() {
+        return this.is2faEnabled;
+    }
+    
+    public void setIs2faEnabled(Boolean is2faEnabled) {
+        this.is2faEnabled = is2faEnabled;
+    }
 }

@@ -24,6 +24,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByCpf(String cpf);
 
     // NOVO: Busca TODOS os usuários com esse login (para o seletor de perfil)
+    // Isso permite que um mesmo email/cpf retorne múltiplas linhas (ex: Morador X, Morador Y, Afiliado)
     List<User> findAllByEmailOrCpf(String email, String cpf);
 
     List<User> findByTenantId(UUID tenantId);
