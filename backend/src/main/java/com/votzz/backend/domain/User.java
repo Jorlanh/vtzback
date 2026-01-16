@@ -114,7 +114,7 @@ public class User implements UserDetails {
     public boolean isEnabled() { return enabled; }
     
     public Boolean getIs2faEnabled() {
-        return this.is2faEnabled;
+        return this.is2faEnabled != null && this.is2faEnabled;
     }
     
     public void setIs2faEnabled(Boolean is2faEnabled) {

@@ -1,5 +1,6 @@
 package com.votzz.backend.config.security;
 
+import com.votzz.backend.domain.User;
 import com.votzz.backend.repository.UserRepository;
 import com.votzz.backend.service.TokenService;
 import jakarta.servlet.FilterChain;
@@ -9,11 +10,11 @@ import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.context.SecurityContextHolder;
-import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
+import java.util.List;
 
 @Component
 public class SecurityFilter extends OncePerRequestFilter {
@@ -32,9 +33,13 @@ public class SecurityFilter extends OncePerRequestFilter {
             var login = tokenService.validateToken(token);
 
             if (login != null && !login.isEmpty()) {
-                UserDetails user = userRepository.findByEmailOrCpf(login, login).orElse(null);
+                // CORREÇÃO PARA MULTI-TENANCY: Busca lista de perfis
+                List<User> users = userRepository.findByEmailIgnoreCase(login);
 
-                if (user != null) {
+                if (!users.isEmpty()) {
+                    // Pega o primeiro perfil para autenticar a requisição no contexto do Spring
+                    User user = users.get(0);
+
                     // Extrai o tenantId do token e coloca no request para o TenantInterceptor usar como fallback
                     String tenantId = tokenService.extractClaim(token, claims -> {
                         Object tid = claims.get("tenantId");

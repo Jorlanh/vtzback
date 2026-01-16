@@ -19,7 +19,9 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByEmailOrCpf(String email, String cpf);
     Optional<User> findByEmail(String email);
     
-    // MÉTODO ADICIONADO PARA CORRIGIR O ERRO NO AUTHSERVICE
+    // MÉTODO PARA BUSCAR TODOS OS PERFIS DO USUÁRIO SEM QUEBRAR O FILTRO
+    List<User> findByEmailIgnoreCase(String email);
+    
     Optional<User> findByCpf(String cpf);
     
     boolean existsByEmail(String email);

@@ -45,33 +45,40 @@ public class SecurityConfig {
     @Bean
     public SecurityFilterChain filterChain(HttpSecurity http) throws Exception {
         http
-            // CORREÇÃO: Desabilita CSRF globalmente para permitir POST/PUT/DELETE com JWT
             .csrf(csrf -> csrf.disable())
-            
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
-                // 1. Prioridade para OPTIONS
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                
-                // 2. Endpoints PÚBLICOS
+                .requestMatchers("/api/auth/2fa/**").authenticated()
+
                 .requestMatchers(
-                    "/api/auth/**",           
+                    "/api/auth/login",
+                    "/api/auth/register-resident",
+                    "/api/auth/register-affiliate",
+                    "/api/auth/refresh",
+                    "/api/auth/forgot-password",
+                    "/api/auth/reset-password",
                     "/api/webhooks/**",       
                     "/api/tenants/public-list",
-                    "/api/users/register-resident",
+                    "/api/tenants/identifier/**", 
                     "/ws-votzz/**",           
                     "/h2-console/**"          
                 ).permitAll()
 
-                // 3. REGRAS PROTEGIDAS
                 .requestMatchers("/api/payments/create-custom").authenticated() 
                 .requestMatchers("/api/admin/**").hasAuthority("ADMIN") 
                 .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
-                .requestMatchers("/api/tenants/**", "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
-                .requestMatchers("/api/users/**").authenticated()
                 
-                // 4. Fallback
+                // --- AJUSTE AQUI: Morador pode ver Financeiro e Relatórios (Apenas GET) ---
+                .requestMatchers(HttpMethod.GET, "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
+                .requestMatchers("/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
+                
+                // Auditoria e Banco continuam restritos a gestores
+                .requestMatchers("/api/tenants/audit-logs", "/api/tenants/bank-info").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
+                .requestMatchers("/api/tenants/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
+                
+                .requestMatchers("/api/users/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);

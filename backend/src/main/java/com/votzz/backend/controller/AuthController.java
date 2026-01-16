@@ -77,10 +77,10 @@ public class AuthController {
         return resto < 2 ? 0 : 11 - resto;
     }
 
-    // --- 1. LOGIN (LÓGICA UNIFICADA & CORRIGIDA PARA MULTI-TENANT) ---
+    // --- 1. LOGIN (LÓGICA UNIFICADA & CORRIGIDA PARA MULTI-TENANT E 2FA) ---
     @PostMapping("/login")
     public ResponseEntity<LoginResponse> login(@RequestBody LoginRequest request) {
-        // 1. Busca usuários
+        // 1. Busca usuários (Pode retornar vários no seu SaaS)
         List<User> candidates = userRepository.findAllByEmailOrCpf(request.login(), request.login());
 
         if (candidates.isEmpty()) {
@@ -96,6 +96,41 @@ public class AuthController {
             throw new RuntimeException("Usuário ou senha inválidos");
         }
 
+        // Pega o primeiro usuário válido para checar o 2FA (que é sincronizado por e-mail)
+        User firstUser = validUsers.get(0);
+
+        // --- CORREÇÃO 2FA: Verifica se a pessoa tem 2FA ativo antes de qualquer coisa ---
+        if (Boolean.TRUE.equals(firstUser.getIs2faEnabled())) {
+            boolean isDeviceTrusted = false;
+            if (request.deviceId() != null && !request.deviceId().isBlank()) {
+                var trust = trustedDeviceRepository.findByUserIdAndDeviceIdentifier(firstUser.getId(), request.deviceId());
+                if (trust.isPresent() && trust.get().getExpiresAt().isAfter(LocalDateTime.now())) {
+                    isDeviceTrusted = true;
+                }
+            }
+            if (!isDeviceTrusted) {
+                // Se não enviou o código, pede o código
+                if (request.code2fa() == null) {
+                      return ResponseEntity.ok(new LoginResponse(
+                        null, null, null, null, null, null, null, null, null, null, null, true, false, null
+                    ));
+                }
+                // Valida o código
+                boolean isCodeValid = gAuth.authorize(firstUser.getSecret2fa(), request.code2fa());
+                if (!isCodeValid) throw new RuntimeException("Código de autenticação inválido.");
+
+                // Se pediu para confiar no dispositivo
+                if (request.trustDevice() && request.deviceId() != null) {
+                    TrustedDevice device = trustedDeviceRepository.findByUserIdAndDeviceIdentifier(firstUser.getId(), request.deviceId()).orElse(new TrustedDevice());
+                    device.setUser(firstUser);
+                    device.setDeviceIdentifier(request.deviceId());
+                    device.setExpiresAt(LocalDateTime.now().plusDays(30));
+                    device.setCreatedAt(LocalDateTime.now());
+                    trustedDeviceRepository.save(device);
+                }
+            }
+        }
+
         User selectedUser = null;
 
         // 3. Verifica se um perfil específico foi selecionado
@@ -103,7 +138,6 @@ public class AuthController {
             String selectedId = request.selectedProfileId();
             String targetTenantId = null;
 
-            // Suporte a ID composto "userID:tenantID"
             if (selectedId.contains(":")) {
                 String[] parts = selectedId.split(":");
                 selectedId = parts[0];
@@ -116,24 +150,18 @@ public class AuthController {
                     .findFirst()
                     .orElseThrow(() -> new RuntimeException("Perfil selecionado inválido."));
 
-            // Se veio um tenantID no combo, define esse tenant como o ativo para a sessão
             if (targetTenantId != null) {
                 String tId = targetTenantId;
                 Tenant activeTenant = selectedUser.getTenants().stream()
                     .filter(t -> t.getId().toString().equals(tId))
                     .findFirst()
-                    .orElse(selectedUser.getTenant()); // Fallback
+                    .orElse(selectedUser.getTenant()); 
                 
                 selectedUser.setTenant(activeTenant);
             }
         } 
         else {
-            // --- CONSTRUÇÃO DO LEQUE DE OPÇÕES ---
-            // Verifica se precisamos mostrar o leque.
-            // Precisamos se:
-            // A) Tem mais de 1 usuário válido (Ex: Conta Afiliado + Conta Morador separadas)
-            // B) OU Tem 1 usuário, mas ele tem múltiplos condomínios na lista (Ex: Síndico Profissional)
-            
+            // --- LÓGICA DO LEQUE ---
             boolean hasMultipleOptions = validUsers.size() > 1;
             if (!hasMultipleOptions && !validUsers.isEmpty()) {
                 User u = validUsers.get(0);
@@ -151,99 +179,42 @@ public class AuthController {
                         userLabel += " (Unid: " + u.getUnidade() + ")";
                     }
 
-                    // Se for Afiliado ou Admin, ou não tiver lista de tenants, adiciona opção simples
                     if (u.getRole() == Role.AFILIADO || u.getRole() == Role.ADMIN || u.getTenants().isEmpty()) {
                         String contextName = "Perfil Global";
                         if (u.getRole() == Role.AFILIADO) contextName = "Painel de Afiliado";
                         if (u.getRole() == Role.ADMIN) contextName = "Administração Votzz";
                         if (u.getTenant() != null && u.getRole() != Role.AFILIADO && u.getRole() != Role.ADMIN) contextName = u.getTenant().getNome();
 
-                        options.add(new ProfileOption(
-                            u.getId().toString(),
-                            u.getRole().name(),
-                            contextName,
-                            userLabel
-                        ));
+                        options.add(new ProfileOption(u.getId().toString(), u.getRole().name(), contextName, userLabel));
                     } 
                     else {
-                        // Se tiver lista de tenants (Síndico/Morador Multi-Condo), cria uma opção para cada
                         for (Tenant t : u.getTenants()) {
-                            // ID COMPOSTO: userID:tenantID
                             String compositeId = u.getId().toString() + ":" + t.getId().toString();
-                            
-                            options.add(new ProfileOption(
-                                compositeId,
-                                u.getRole().name(),
-                                t.getNome(), // Nome do Condomínio Específico
-                                userLabel
-                            ));
+                            options.add(new ProfileOption(compositeId, u.getRole().name(), t.getNome(), userLabel));
                         }
                     }
                 }
-
                 return ResponseEntity.ok(new LoginResponse(true, options));
-            }
-            
-            // Se só tem 1 opção e nenhum tenant extra, segue direto
+            } 
             selectedUser = validUsers.get(0);
-        }
-
-        // 4. VERIFICAÇÃO 2FA (Lógica mantida)
-        if (Boolean.TRUE.equals(selectedUser.getIs2faEnabled())) {
-            boolean isDeviceTrusted = false;
-            if (request.deviceId() != null && !request.deviceId().isBlank()) {
-                var trust = trustedDeviceRepository.findByUserIdAndDeviceIdentifier(selectedUser.getId(), request.deviceId());
-                if (trust.isPresent() && trust.get().getExpiresAt().isAfter(LocalDateTime.now())) {
-                    isDeviceTrusted = true;
-                }
-            }
-            if (!isDeviceTrusted) {
-                if (request.code2fa() == null) {
-                      return ResponseEntity.ok(new LoginResponse(
-                        null, null, null, null, null, null, null, null, null, null, null, true, false, null
-                    ));
-                }
-                boolean isCodeValid = gAuth.authorize(selectedUser.getSecret2fa(), request.code2fa());
-                if (!isCodeValid) throw new RuntimeException("Código de autenticação inválido.");
-
-                if (request.trustDevice() && request.deviceId() != null) {
-                    TrustedDevice device = trustedDeviceRepository.findByUserIdAndDeviceIdentifier(selectedUser.getId(), request.deviceId()).orElse(new TrustedDevice());
-                    device.setUser(selectedUser);
-                    device.setDeviceIdentifier(request.deviceId());
-                    device.setExpiresAt(LocalDateTime.now().plusDays(30));
-                    device.setCreatedAt(LocalDateTime.now());
-                    trustedDeviceRepository.save(device);
-                }
-            }
         }
 
         // 5. Login Finalizado
         selectedUser.setLastSeen(LocalDateTime.now());
-        // Não salvamos o tenant setado transiently (setTenant) para não bagunçar o banco, 
-        // o save aqui é só pro lastSeen. O tokenService usará o tenant que setamos na memória.
         userRepository.save(selectedUser);
 
         String token = tokenService.generateToken(selectedUser, request.keepLogged());
 
         return ResponseEntity.ok(new LoginResponse(
-            token, 
-            "Bearer", 
-            selectedUser.getId().toString(), 
-            selectedUser.getNome(), 
-            selectedUser.getEmail(),
+            token, "Bearer", selectedUser.getId().toString(), selectedUser.getNome(), selectedUser.getEmail(),
             selectedUser.getRole().name(), 
             selectedUser.getTenant() != null ? selectedUser.getTenant().getId().toString() : null,
             selectedUser.getTenant() != null ? selectedUser.getTenant().getNome() : "Sem Condomínio",
-            selectedUser.getBloco(), 
-            selectedUser.getUnidade(), 
-            selectedUser.getCpf(),
-            false, 
-            false, 
-            null
+            selectedUser.getBloco(), selectedUser.getUnidade(), selectedUser.getCpf(),
+            false, false, null
         ));
     }
     
-    // Método select-context mantido para compatibilidade, mas o fluxo principal acima já resolve o leque
     @PostMapping("/select-context")
     public ResponseEntity<LoginResponse> selectContext(@RequestBody Map<String, String> payload) {
         String userIdRaw = payload.get("userId");
@@ -280,31 +251,41 @@ public class AuthController {
         ));
     }
 
-    // --- (MÉTODOS 2FA, REGISTRO, ETC. MANTIDOS IGUAIS ABAIXO) ---
-    // ... Mantenha o restante do código que você já tem para register, forgotPassword, etc. ...
-    
+    // --- 2FA SINCRONIZADO PARA MÚLTIPLAS CONTAS ---
     @PostMapping("/2fa/setup")
     public ResponseEntity<TwoFactorSetupResponse> setup2FA(Principal principal) {
-        User user = userRepository.findByEmail(principal.getName()).orElseThrow();
+        // Busca TODOS os registros desse e-mail para sincronizar o segredo
+        List<User> users = userRepository.findByEmailIgnoreCase(principal.getName());
+        if (users.isEmpty()) throw new RuntimeException("Usuário não encontrado.");
+
         final GoogleAuthenticatorKey key = gAuth.createCredentials();
         String secret = key.getKey();
-        user.setSecret2fa(secret);
-        user.setIs2faEnabled(false); 
-        userRepository.save(user);
-        String otpAuthURL = GoogleAuthenticatorQRGenerator.getOtpAuthTotpURL("Votzz", user.getEmail(), key);
+
+        // Salva o mesmo segredo em todas as contas para a pessoa usar um código só
+        users.forEach(u -> {
+            u.setSecret2fa(secret);
+            u.setIs2faEnabled(false); 
+            userRepository.save(u);
+        });
+
+        String otpAuthURL = GoogleAuthenticatorQRGenerator.getOtpAuthTotpURL("Votzz", users.get(0).getEmail(), key);
         return ResponseEntity.ok(new TwoFactorSetupResponse(secret, otpAuthURL));
     }
 
     @PostMapping("/2fa/confirm")
     public ResponseEntity<String> confirm2FA(@RequestBody TwoFactorConfirmRequest request, Principal principal) {
-        User user = userRepository.findByEmail(principal.getName()).orElseThrow();
-        if (user.getSecret2fa() == null) throw new RuntimeException("Configuração de 2FA não iniciada.");
+        List<User> users = userRepository.findByEmailIgnoreCase(principal.getName());
+        if (users.isEmpty()) throw new RuntimeException("Usuário não encontrado.");
+        
         try {
             int code = Integer.parseInt(request.code());
-            if (gAuth.authorize(user.getSecret2fa(), code)) {
-                user.setIs2faEnabled(true);
-                userRepository.save(user);
-                return ResponseEntity.ok("Autenticação de dois fatores ativada com sucesso!");
+            if (gAuth.authorize(users.get(0).getSecret2fa(), code)) {
+                // Ativa em todas as contas
+                users.forEach(u -> {
+                    u.setIs2faEnabled(true);
+                    userRepository.save(u);
+                });
+                return ResponseEntity.ok("Autenticação de dois fatores ativada com sucesso em todos os seus perfis!");
             } else {
                 return ResponseEntity.badRequest().body("Código inválido.");
             }
@@ -315,11 +296,13 @@ public class AuthController {
 
     @PostMapping("/2fa/disable")
     public ResponseEntity<String> disable2FA(Principal principal) {
-        User user = userRepository.findByEmail(principal.getName()).orElseThrow();
-        user.setIs2faEnabled(false);
-        user.setSecret2fa(null);
-        userRepository.save(user);
-        return ResponseEntity.ok("2FA desativado.");
+        List<User> users = userRepository.findByEmailIgnoreCase(principal.getName());
+        users.forEach(u -> {
+            u.setIs2faEnabled(false);
+            u.setSecret2fa(null);
+            userRepository.save(u);
+        });
+        return ResponseEntity.ok("2FA desativado em todos os perfis.");
     }
 
     @PostMapping("/register-affiliate")
@@ -409,11 +392,16 @@ public class AuthController {
 
     @PatchMapping("/change-password")
     public ResponseEntity<String> changePassword(@RequestBody ChangePasswordRequest request, Principal principal) {
-        User user = userRepository.findByEmail(principal.getName()).orElseThrow(); 
-        if (!passwordEncoder.matches(request.oldPassword(), user.getPassword())) return ResponseEntity.badRequest().body("Senha incorreta.");
-        user.setPassword(passwordEncoder.encode(request.newPassword()));
-        userRepository.save(user);
-        return ResponseEntity.ok("Senha alterada!");
+        List<User> users = userRepository.findByEmailIgnoreCase(principal.getName());
+        if (users.isEmpty()) throw new RuntimeException("E-mail não encontrado.");
+        if (!passwordEncoder.matches(request.oldPassword(), users.get(0).getPassword())) return ResponseEntity.badRequest().body("Senha incorreta.");
+        
+        String newPassEncoded = passwordEncoder.encode(request.newPassword());
+        users.forEach(u -> {
+            u.setPassword(newPassEncoded);
+            userRepository.save(u);
+        });
+        return ResponseEntity.ok("Senha alterada em todos os seus perfis!");
     }
 
     @PostMapping("/forgot-password")
@@ -432,10 +420,16 @@ public class AuthController {
     public ResponseEntity<String> resetPassword(@RequestBody ResetPasswordRequest request) {
         PasswordResetToken resetToken = resetTokenRepository.findByToken(request.code()).orElseThrow(() -> new RuntimeException("Código inválido."));
         if (resetToken.isExpired()) throw new RuntimeException("Código expirado.");
-        User user = resetToken.getUser();
-        user.setPassword(passwordEncoder.encode(request.newPassword()));
-        userRepository.save(user);
+        
+        // Redefine a senha em todas as contas daquela pessoa
+        List<User> users = userRepository.findByEmailIgnoreCase(resetToken.getUser().getEmail());
+        String newPassEncoded = passwordEncoder.encode(request.newPassword());
+        users.forEach(u -> {
+            u.setPassword(newPassEncoded);
+            userRepository.save(u);
+        });
+        
         resetTokenRepository.delete(resetToken);
-        return ResponseEntity.ok("Senha redefinida!");
+        return ResponseEntity.ok("Senha redefinida em todas as suas contas!");
     }
 }
