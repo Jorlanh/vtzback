@@ -9,6 +9,7 @@ import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.dto.AdminDashboardStats;
+import com.votzz.backend.dto.AuthDTOs; // Import full class to access inner static class
 import com.votzz.backend.dto.AuthDTOs.LoginResponse;
 import com.votzz.backend.dto.UserDTO;
 import com.votzz.backend.repository.TenantRepository;
@@ -49,8 +50,6 @@ public class AdminController {
     public ResponseEntity<AdminDashboardStats> getStats() { 
         AdminDashboardStats original = adminService.getDashboardStats();
         
-        // Pega o maior valor entre o Banco de Dados (ActivityInterceptor) e o WebSocket
-        // Isso garante que se você estiver navegando via REST, você conta como 1.
         long realOnlineCount = Math.max(original.onlineUsers(), webSocketEventListener.getOnlineCount());
 
         AdminDashboardStats updated = new AdminDashboardStats(
@@ -64,10 +63,6 @@ public class AdminController {
         return ResponseEntity.ok(updated); 
     }
 
-    // ... (Mantenha o restante dos métodos inalterados) ...
-    // Vou omitir o resto para economizar espaço, pois a correção é apenas no getStats
-    // e os outros métodos dependem apenas do serviço.
-    
     @GetMapping("/organized-users")
     public ResponseEntity<Map<String, Object>> listOrganized() { return ResponseEntity.ok(adminService.listOrganizedUsers()); }
 
@@ -99,9 +94,22 @@ public class AdminController {
 
         String token = tokenService.generateToken(tempUser);
 
+        // CORREÇÃO: Construtor atualizado para 14 argumentos
         return ResponseEntity.ok(new LoginResponse(
-            token, "Bearer", tempUser.getId().toString(), tempUser.getNome(), tempUser.getEmail(),
-            "SINDICO", tenant.getId().toString(), null, null, null, false, false, null
+            token, 
+            "Bearer", 
+            tempUser.getId().toString(), 
+            tempUser.getNome(), 
+            tempUser.getEmail(),
+            "SINDICO", 
+            tenant.getId().toString(), 
+            tenant.getNome(), // tenantName
+            null, // bloco
+            null, // unidade
+            null, // cpf
+            false, // requiresTwoFactor
+            false, // is2faSetup
+            null  // profiles
         ));
     }
 
@@ -186,12 +194,12 @@ public class AdminController {
 
     public record CouponDTO(String code, BigDecimal discountPercent, Integer quantity) {}
     
-    // CORREÇÃO AQUI: Adicionado campo 'plano'
     public record ManualTenantDTO(
         String condoName, String cnpj, Integer qtyUnits, String secretKeyword, 
         String nameSyndic, String emailSyndic, String passwordSyndic, String cpfSyndic, String phoneSyndic,
         String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia,
-        String plano 
+        String plano,
+        LocalDate dataExpiracaoPlano
     ) {}
 
     public record UpdateTenantDTO(
@@ -218,6 +226,7 @@ public class AdminController {
         @JsonProperty("cpf") String cpf, 
         @JsonProperty("whatsapp") @JsonAlias({"phone", "celular", "mobile", "zap"}) String whatsapp, 
         @JsonProperty("role") String role, 
-        @JsonProperty("newPassword") @JsonAlias({"password", "senha"}) String newPassword
+        @JsonProperty("newPassword") @JsonAlias({"password", "senha"}) String newPassword,
+        @JsonProperty("tenantId") String tenantId
     ) {}
 }

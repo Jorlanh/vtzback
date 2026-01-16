@@ -18,6 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.LocalDate; // Importante para dataExpiracaoPlano
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -109,8 +110,15 @@ public class AdminService {
             if (u.getRole() == Role.ADMIN || u.getRole() == Role.AFILIADO) continue;
 
             UserDTO dto = mapToDTO(u);
-            String pastaKey = (u.getTenant() != null) ? u.getTenant().getNome() : "Sem Condomínio";
-            pastas.computeIfAbsent(pastaKey, k -> new ArrayList<>()).add(dto);
+            if (u.getTenants().isEmpty()) {
+                pastas.get("Sem Condomínio").add(dto);
+            } else {
+                for (Tenant t : u.getTenants()) {
+                    if (pastas.containsKey(t.getNome())) {
+                        pastas.get(t.getNome()).add(dto);
+                    }
+                }
+            }
         }
 
         Map<String, Object> resp = new HashMap<>();
@@ -121,9 +129,11 @@ public class AdminService {
 
     @Transactional
     public void createUserLinked(CreateUserRequest dto) {
-        if (userRepository.findByEmail(dto.email()).isPresent()) {
-            throw new RuntimeException("E-mail já está em uso.");
+        User existingUser = userRepository.findByEmail(dto.email()).orElse(null);
+        if (existingUser != null) {
+             throw new RuntimeException("E-mail já está em uso. Para vincular um usuário existente a este condomínio, use a função de convite (Futura implementação).");
         }
+
         if (dto.cpf() != null && !dto.cpf().isEmpty()) {
             boolean cpfExists = userRepository.findAll().stream()
                     .anyMatch(u -> dto.cpf().equals(u.getCpf()));
@@ -140,7 +150,10 @@ public class AdminService {
         user.setWhatsapp(dto.whatsapp());
         user.setPassword(passwordEncoder.encode(dto.password()));
         user.setRole(Role.valueOf(dto.role()));
-        user.setTenant(tenant);
+        
+        user.setTenants(new ArrayList<>());
+        user.getTenants().add(tenant);
+        
         user.setUnidade(dto.unidade());
         user.setBloco(dto.bloco());
 
@@ -151,18 +164,13 @@ public class AdminService {
     @Transactional
     public void createTenantManual(ManualTenantDTO dto) {
         Plano plano = null;
-        // CORREÇÃO: Tenta buscar o plano pelo nome enviado (ex: ESSENCIAL_MENSAL)
         if (dto.plano() != null && !dto.plano().isBlank()) {
             plano = planoRepository.findByNomeIgnoreCase(dto.plano())
                     .orElseThrow(() -> new RuntimeException("Plano não encontrado no sistema: " + dto.plano()));
         } else {
-            // Fallback se não vier nada
             plano = planoRepository.findAll().stream().findFirst()
-                    .orElseThrow(() -> new RuntimeException("ERRO: Nenhum Plano cadastrado no sistema (DB vazio)."));
+                    .orElseThrow(() -> new RuntimeException("ERRO: Nenhum Plano cadastrado no sistema."));
         }
-
-        if (userRepository.findByEmail(dto.emailSyndic()).isPresent())
-            throw new RuntimeException("E-mail do síndico já cadastrado.");
 
         Tenant tenant = new Tenant();
         tenant.setNome(dto.condoName());
@@ -179,20 +187,59 @@ public class AdminService {
         tenant.setCidade(dto.cidade());
         tenant.setEstado(dto.estado());
         tenant.setPontoReferencia(dto.pontoReferencia());
-        tenantRepository.save(tenant);
+        
+        // CORREÇÃO: Uso de LocalDate em vez de LocalDateTime
+        if(dto.dataExpiracaoPlano() != null) {
+            tenant.setDataExpiracaoPlano(dto.dataExpiracaoPlano());
+        } else {
+            // Padrão 1 ano se não informado
+            tenant.setDataExpiracaoPlano(LocalDate.now().plusYears(1)); 
+        }
 
-        User syndic = new User();
-        syndic.setNome(dto.nameSyndic());
-        syndic.setEmail(dto.emailSyndic());
-        syndic.setCpf(dto.cpfSyndic());
-        syndic.setWhatsapp(dto.phoneSyndic());
-        syndic.setPassword(passwordEncoder.encode(dto.passwordSyndic()));
-        syndic.setRole(Role.SINDICO);
-        syndic.setTenant(tenant);
-        syndic.setUnidade("ADM");
+        tenant = tenantRepository.save(tenant);
+
+        // --- LÓGICA MULTI-TENANT PARA SÍNDICO ---
+        User syndic = userRepository.findByEmail(dto.emailSyndic()).orElse(null);
+
+        if (syndic != null) {
+            System.out.println(">>> Usuário Síndico existente encontrado. Vinculando...");
+            
+            if (syndic.getCpf() != null && !syndic.getCpf().equals(dto.cpfSyndic())) {
+                throw new RuntimeException("O e-mail informado já pertence a um usuário com outro CPF.");
+            }
+
+            if (!syndic.getTenants().contains(tenant)) {
+                syndic.getTenants().add(tenant);
+            }
+            
+            if (syndic.getRole() == Role.MORADOR) {
+                syndic.setRole(Role.SINDICO);
+            }
+            
+            // Opcional: Atualiza o tenant 'default' para o mais recente
+            syndic.setTenant(tenant); 
+
+        } else {
+            System.out.println(">>> Criando novo usuário Síndico...");
+            syndic = new User();
+            syndic.setNome(dto.nameSyndic());
+            syndic.setEmail(dto.emailSyndic());
+            syndic.setCpf(dto.cpfSyndic());
+            syndic.setWhatsapp(dto.phoneSyndic());
+            syndic.setPassword(passwordEncoder.encode(dto.passwordSyndic()));
+            syndic.setRole(Role.SINDICO);
+            
+            syndic.setTenants(new ArrayList<>());
+            syndic.getTenants().add(tenant);
+            syndic.setTenant(tenant); // Define padrão
+            
+            syndic.setUnidade("ADM");
+            syndic.setBloco("ADM");
+        }
+
         userRepository.save(syndic);
 
-        logAction("CRIAR_CONDOMINIO", "Criou condomínio " + tenant.getNome() + " e síndico " + syndic.getNome() + " com plano " + plano.getNome());
+        logAction("CRIAR_CONDOMINIO", "Criou condomínio " + tenant.getNome() + " vinculado ao síndico " + syndic.getNome());
     }
 
     @Transactional
@@ -230,6 +277,7 @@ public class AdminService {
             changed = true;
         }
 
+        // CORREÇÃO: Uso de LocalDate
         if (dto.dataExpiracaoPlano() != null) {
             tenant.setDataExpiracaoPlano(dto.dataExpiracaoPlano());
             detailsLog.append("Validade Manual -> ").append(dto.dataExpiracaoPlano()).append(". ");
@@ -350,6 +398,29 @@ public class AdminService {
             changes.add("Senha alterada");
             user.setPassword(passwordEncoder.encode(req.newPassword()));
         }
+        
+        // --- AQUI ESTÁ A LÓGICA QUE VOCÊ PEDIU PARA ADICIONAR (MOVIMENTAÇÃO DE CONDOMÍNIO) ---
+        if (req.tenantId() != null && !req.tenantId().isBlank()) {
+            try {
+                UUID newTenantUUID = UUID.fromString(req.tenantId());
+                Tenant newTenant = tenantRepository.findById(newTenantUUID)
+                        .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+
+                boolean alreadyIn = user.getTenants().stream().anyMatch(t -> t.getId().equals(newTenantUUID));
+                
+                if (!alreadyIn) {
+                    user.getTenants().add(newTenant);
+                    user.setTenant(newTenant);
+                    changes.add("Adicionado ao condomínio: " + newTenant.getNome());
+                } else if (user.getTenant() == null || !user.getTenant().getId().equals(newTenantUUID)) {
+                    user.setTenant(newTenant);
+                    changes.add("Definido como condomínio principal: " + newTenant.getNome());
+                }
+
+            } catch (Exception e) {
+                System.err.println("Erro ao vincular tenant: " + e.getMessage());
+            }
+        }
 
         userRepository.save(user);
 
@@ -381,11 +452,20 @@ public class AdminService {
     }
 
     private UserDTO mapToDTO(User u) {
+        String tenantName = "Sem Condomínio";
+        UUID tenantId = null;
+        
+        if (!u.getTenants().isEmpty()) {
+            Tenant t = u.getTenants().get(0);
+            tenantName = t.getNome() + (u.getTenants().size() > 1 ? " (+" + (u.getTenants().size()-1) + ")" : "");
+            tenantId = t.getId();
+        }
+
         return new UserDTO(
                 u.getId(), u.getNome(), u.getEmail(), u.getRole().name(),
-                u.getTenant() != null ? u.getTenant().getNome() : "Sem Condomínio",
+                tenantName,
                 u.getLastSeen(), null, u.getBloco(), u.getUnidade(),
-                u.getTenant() != null ? u.getTenant().getId() : null,
+                tenantId,
                 u.getCpf(), u.getWhatsapp());
     }
 

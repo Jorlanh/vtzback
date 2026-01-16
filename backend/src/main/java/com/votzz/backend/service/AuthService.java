@@ -14,8 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
-import java.util.Map;
-import java.util.UUID;
+import java.util.*;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +26,7 @@ public class AuthService {
     private final CouponRepository couponRepository;
     private final PasswordEncoder passwordEncoder;
     private final AsaasClient asaasClient;
+    private final TokenService tokenService; 
 
     @Value("${votzz.kiwify.link.essencial}")
     private String linkEssencial;
@@ -34,18 +34,85 @@ public class AuthService {
     @Value("${votzz.kiwify.link.business}")
     private String linkBusiness;
 
+    public LoginResponse login(LoginRequest dto) {
+        // 1. Busca o usuário
+        User user = userRepository.findByEmail(dto.login())
+                .or(() -> userRepository.findByCpf(dto.login()))
+                .orElseThrow(() -> new RuntimeException("Usuário ou senha inválidos."));
+
+        // 2. Valida Senha
+        if (!passwordEncoder.matches(dto.password(), user.getPassword())) {
+            throw new RuntimeException("Usuário ou senha inválidos.");
+        }
+
+        // 3. Valida Status
+        if (!user.isEnabled()) {
+            throw new RuntimeException("Conta desativada. Entre em contato com o suporte.");
+        }
+
+        // 4. Lógica do "Leque" (Multi-Tenant)
+        List<Tenant> tenants = user.getTenants();
+        boolean hasMultipleTenants = tenants != null && tenants.size() > 1;
+        
+        if (hasMultipleTenants && (dto.selectedProfileId() == null || dto.selectedProfileId().isBlank())) {
+            List<ProfileOption> profiles = new ArrayList<>();
+            for (Tenant t : tenants) {
+                profiles.add(new ProfileOption(
+                    t.getId().toString(), 
+                    user.getRole().name(),
+                    t.getNome(), 
+                    user.getNome()
+                ));
+            }
+            return new LoginResponse(true, profiles); 
+        }
+
+        // 5. Seleção do Contexto
+        if (dto.selectedProfileId() != null && !dto.selectedProfileId().isBlank()) {
+            UUID selectedTenantId = UUID.fromString(dto.selectedProfileId());
+            Tenant selectedTenant = tenants.stream()
+                    .filter(t -> t.getId().equals(selectedTenantId))
+                    .findFirst()
+                    .orElseThrow(() -> new RuntimeException("Você não tem acesso a este condomínio."));
+            user.setTenant(selectedTenant);
+        } else if (tenants != null && !tenants.isEmpty()) {
+            user.setTenant(tenants.get(0));
+        }
+
+        // 6. Gera o Token
+        String token = tokenService.generateToken(user, dto.keepLogged());
+        
+        user.setLastSeen(LocalDateTime.now());
+        userRepository.save(user);
+
+        // 7. Retorna Sucesso - CORRIGIDO PARA BATER COM O CONSTRUTOR DO DTO
+        return new LoginResponse(
+            token, 
+            "Bearer", 
+            user.getId().toString(), 
+            user.getNome(), 
+            user.getEmail(), 
+            user.getRole().name(), 
+            user.getTenant() != null ? user.getTenant().getId().toString() : null,
+            user.getTenant() != null ? user.getTenant().getNome() : "Sem Condomínio",
+            user.getBloco(),   // <-- Adicionado
+            user.getUnidade(), // <-- Adicionado
+            user.getCpf(),     // <-- Adicionado
+            false, 
+            false, 
+            null 
+        );
+    }
+
     @Transactional
     public RegisterResponse registerCondo(RegisterCondoRequest dto) {
-        // 1. Validação de Email
         if (userRepository.findByEmail(dto.emailSyndic()).isPresent()) {
             throw new RuntimeException("Este e-mail já está em uso.");
         }
 
-        // 2. Busca Plano
         Plano plano = planoRepository.findById(UUID.fromString(dto.planId()))
             .orElseThrow(() -> new RuntimeException("Plano não encontrado."));
 
-        // 3. Cria Tenant
         Tenant tenant = new Tenant();
         tenant.setNome(dto.condoName());
         tenant.setCnpj(dto.cnpj());
@@ -66,7 +133,6 @@ public class AuthService {
 
         tenantRepository.save(tenant);
 
-        // 4. Cria Síndico
         User syndic = new User();
         syndic.setNome(dto.nameSyndic());
         syndic.setEmail(dto.emailSyndic());
@@ -74,7 +140,8 @@ public class AuthService {
         syndic.setWhatsapp(dto.whatsappSyndic());
         syndic.setPassword(passwordEncoder.encode(dto.passwordSyndic()));
         syndic.setRole(Role.SINDICO);
-        syndic.setTenant(tenant);
+        syndic.setTenant(tenant); 
+        syndic.getTenants().add(tenant); 
         syndic.setUnidade("ADM");
         userRepository.save(syndic);
 
@@ -82,52 +149,37 @@ public class AuthService {
         String pixPayload = null;
         String pixImage = null;
 
-        // 5. Lógica Financeira (Custom vs Fixos)
         if (plano.getNome().equalsIgnoreCase("Custom")) {
-            
-            // A. Calcula Valor Base
             BigDecimal valorFinal = calcularValorCustom(dto.qtyUnits(), plano.getCiclo());
 
-            // B. Aplica Cupom (Se enviado no cadastro final)
             if (dto.couponCode() != null && !dto.couponCode().trim().isEmpty()) {
                 valorFinal = aplicarCupom(dto.couponCode(), valorFinal);
             }
 
-            // C. Integração Asaas
             try {
-                // Se valor > 0, gera cobrança
                 if (valorFinal.compareTo(BigDecimal.ZERO) > 0) {
                     String customerId = asaasClient.createCustomer(dto.nameSyndic(), dto.cpfSyndic(), dto.emailSyndic());
                     tenant.setAsaasCustomerId(customerId);
-                    
                     Map<String, Object> charge = asaasClient.createPixCharge(customerId, valorFinal);
-                    
                     if (charge != null) {
                         pixPayload = (String) charge.get("payload");
                         pixImage = (String) charge.get("encodedImage");
                     }
-
                     if (pixPayload == null || pixPayload.isEmpty()) {
                         throw new RuntimeException("O sistema financeiro não retornou o código Pix.");
                     }
                 } else {
-                    // 100% de Desconto (Valor Zero) -> Ativação Imediata
                     tenant.setStatusAssinatura("PAID");
                     tenant.setAtivo(true);
-                    // Não gera Pix, retorna sucesso direto
                 }
-
                 tenantRepository.save(tenant);
-
             } catch (Exception e) {
                 throw new RuntimeException("Erro financeiro: " + e.getMessage());
             }
 
         } else {
-            // Planos Fixos (Kiwify)
             String nomePlano = plano.getNome().toLowerCase();
             String params = "?email=" + dto.emailSyndic() + "&name=" + dto.nameSyndic() + "&cpf=" + dto.cpfSyndic();
-            
             if (nomePlano.contains("essencial")) redirectUrl = linkEssencial + params;
             else if (nomePlano.contains("business")) redirectUrl = linkBusiness + params;
         }
@@ -135,28 +187,18 @@ public class AuthService {
         return new RegisterResponse("Cadastro realizado!", redirectUrl, pixPayload, pixImage);
     }
 
-    // Método privado para aplicar o desconto e DECREMENTAR o uso (chamado no registro)
     private BigDecimal aplicarCupom(String code, BigDecimal valorOriginal) {
         Coupon coupon = couponRepository.findByCodeAndActiveTrue(code)
             .orElseThrow(() -> new RuntimeException("Cupom inválido (" + code + ") ou não encontrado."));
 
-        if (coupon.getQuantity() <= 0) {
-            throw new RuntimeException("Este cupom esgotou.");
-        }
-        if (coupon.getExpirationDate() != null && coupon.getExpirationDate().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Este cupom expirou.");
-        }
+        if (coupon.getQuantity() <= 0) throw new RuntimeException("Este cupom esgotou.");
+        if (coupon.getExpirationDate() != null && coupon.getExpirationDate().isBefore(LocalDateTime.now())) throw new RuntimeException("Este cupom expirou.");
 
-        BigDecimal desconto = valorOriginal.multiply(coupon.getDiscountPercent())
-                                           .divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
-        
+        BigDecimal desconto = valorOriginal.multiply(coupon.getDiscountPercent()).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
         BigDecimal novoValor = valorOriginal.subtract(desconto);
 
-        // Atualiza Cupom (Decrementa)
         coupon.setQuantity(coupon.getQuantity() - 1);
-        if (coupon.getQuantity() <= 0) {
-            coupon.setActive(false);
-        }
+        if (coupon.getQuantity() <= 0) coupon.setActive(false);
         couponRepository.save(coupon);
 
         return novoValor.max(BigDecimal.ZERO);
@@ -168,7 +210,6 @@ public class AuthService {
         int franquia = 80;
 
         BigDecimal valorMensal = basePrice;
-
         if (unidades > franquia) {
             BigDecimal extras = BigDecimal.valueOf(unidades - franquia);
             valorMensal = valorMensal.add(extras.multiply(extraUnitCost));
@@ -183,21 +224,10 @@ public class AuthService {
         }
     }
 
-    /**
-     * [NOVO] Valida o cupom para o botão "Aplicar" do Frontend.
-     * Apenas verifica e retorna a % sem decrementar quantidade.
-     */
     public BigDecimal validateCoupon(String code) {
-        Coupon coupon = couponRepository.findByCodeAndActiveTrue(code)
-            .orElseThrow(() -> new RuntimeException("Cupom inválido ou inativo."));
-
-        if (coupon.getQuantity() <= 0) {
-            throw new RuntimeException("Este cupom já foi totalmente utilizado.");
-        }
-        if (coupon.getExpirationDate() != null && coupon.getExpirationDate().isBefore(LocalDateTime.now())) {
-            throw new RuntimeException("Este cupom expirou.");
-        }
-
+        Coupon coupon = couponRepository.findByCodeAndActiveTrue(code).orElseThrow(() -> new RuntimeException("Cupom inválido ou inativo."));
+        if (coupon.getQuantity() <= 0) throw new RuntimeException("Este cupom já foi totalmente utilizado.");
+        if (coupon.getExpirationDate() != null && coupon.getExpirationDate().isBefore(LocalDateTime.now())) throw new RuntimeException("Este cupom expirou.");
         return coupon.getDiscountPercent();
     }
 }

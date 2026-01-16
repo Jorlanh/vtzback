@@ -135,10 +135,9 @@ public class AuthController {
                 );
             }).toList();
 
+            // Retorna o "Leque" (Constructor 2)
             return ResponseEntity.ok(new LoginResponse(
-                null, null, null, null, null, null, null, null, null, null, 
                 true, // multipleProfiles = true
-                false, 
                 options
             ));
         }
@@ -160,10 +159,12 @@ public class AuthController {
             if (!isDeviceTrusted) {
                 // Se o código não veio, pede para o front
                 if (request.code2fa() == null) {
-                     return ResponseEntity.ok(new LoginResponse(
-                        null, null, null, null, null, null, null, null, null, null, 
-                        false, 
+                      // CORRIGIDO: Passando null para tenantName (8º argumento) e demais campos
+                      return ResponseEntity.ok(new LoginResponse(
+                        null, null, null, null, null, 
+                        null, null, null, null, null, null, 
                         true, // requiresTwoFactor = TRUE
+                        false, 
                         null
                     ));
                 }
@@ -194,16 +195,24 @@ public class AuthController {
         selectedUser.setLastSeen(LocalDateTime.now());
         userRepository.save(selectedUser);
 
-        // ALTERAÇÃO: Passa o 'keepLogged' para o TokenService
+        // Gera token
         String token = tokenService.generateToken(selectedUser, request.keepLogged());
 
+        // CORRIGIDO: Adicionado tenantName na posição correta (8º argumento)
         return ResponseEntity.ok(new LoginResponse(
-            token, "Bearer", selectedUser.getId().toString(), selectedUser.getNome(), selectedUser.getEmail(),
+            token, 
+            "Bearer", 
+            selectedUser.getId().toString(), 
+            selectedUser.getNome(), 
+            selectedUser.getEmail(),
             selectedUser.getRole().name(), 
             selectedUser.getTenant() != null ? selectedUser.getTenant().getId().toString() : null,
-            selectedUser.getBloco(), selectedUser.getUnidade(), selectedUser.getCpf(),
+            selectedUser.getTenant() != null ? selectedUser.getTenant().getNome() : "Sem Condomínio", // TenantName
+            selectedUser.getBloco(), 
+            selectedUser.getUnidade(), 
+            selectedUser.getCpf(),
             false, 
-            false, // requiresTwoFactor = FALSE (ou já passou)
+            false, // is2faSetup
             null
         ));
     }
@@ -216,10 +225,12 @@ public class AuthController {
 
         String token = tokenService.generateToken(user);
         
+        // CORRIGIDO: Adicionado tenantName na posição correta (8º argumento)
         return ResponseEntity.ok(new LoginResponse(
             token, "Bearer", user.getId().toString(), user.getNome(), user.getEmail(),
             user.getRole().name(), 
             user.getTenant() != null ? user.getTenant().getId().toString() : null,
+            user.getTenant() != null ? user.getTenant().getNome() : null, // TenantName
             user.getBloco(), user.getUnidade(), user.getCpf(),
             false, false, null
         ));

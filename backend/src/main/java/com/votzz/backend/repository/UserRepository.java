@@ -18,6 +18,10 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     
     Optional<User> findByEmailOrCpf(String email, String cpf);
     Optional<User> findByEmail(String email);
+    
+    // MÉTODO ADICIONADO PARA CORRIGIR O ERRO NO AUTHSERVICE
+    Optional<User> findByCpf(String cpf);
+    
     boolean existsByEmail(String email);
     boolean existsByCpf(String cpf);
 
@@ -25,13 +29,11 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     List<User> findByTenantId(UUID tenantId);
     long countByTenantId(UUID tenantId);
 
-    // Mantido para compatibilidade, mas o Interceptor agora usa save()
     @Modifying
     @Transactional
     @Query("UPDATE User u SET u.lastSeen = :now WHERE u.email = :email")
     void updateLastSeen(@Param("email") String email, @Param("now") LocalDateTime now);
 
-    // Query corrigida para pegar usuários ativos a partir do tempo limite
     @Query("SELECT COUNT(u) FROM User u WHERE u.lastSeen >= :limit")
     long countOnlineUsers(@Param("limit") LocalDateTime limit);
 }

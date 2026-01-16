@@ -15,28 +15,61 @@ public class AuthDTOs {
         boolean keepLogged   // Checkbox "Mantenha-me conectado" (Sessão longa)
     ) {}
 
-    // DTO para as opções de perfil
-    public record ProfileOption(String id, String nome, String role, String tenantName) {}
+    // DTO para as opções de perfil (Leque)
+    public record ProfileOption(String userId, String role, String contextName, String userName) {}
 
     // DTO auxiliar para unidades
     public record UnitDTO(String bloco, String unidade) {}
 
-    // Response atualizado
-    public record LoginResponse(
-        String token, 
-        String type, 
-        String id, 
-        String nome, 
-        String email, 
-        String role, 
-        String tenantId, 
-        String bloco, 
-        String unidade, 
-        String cpf,
-        boolean multipleProfiles, 
-        boolean requiresTwoFactor, // Flag para avisar o front que precisa do código
-        List<ProfileOption> profiles 
-    ) {}
+    // --- CORREÇÃO: Transformado em CLASS para suportar múltiplos construtores (Sobrecarga) ---
+    public static class LoginResponse {
+        public String token;
+        public String type = "Bearer";
+        public String id;
+        public String nome;
+        public String email;
+        public String role;
+        public String tenantId;
+        public String tenantName; // Nome do condomínio para exibir no Dashboard
+        public String bloco;
+        public String unidade;
+        public String cpf;
+        
+        public boolean multipleProfiles;
+        public boolean requiresTwoFactor;
+        public boolean is2faSetup; // Para o primeiro acesso
+        public List<String> backupCodes;
+        public List<ProfileOption> profiles;
+
+        // Construtor 1: Login com Sucesso (Token gerado)
+        public LoginResponse(String token, String type, String id, String nome, String email, 
+                             String role, String tenantId, String tenantName, 
+                             String bloco, String unidade, String cpf,
+                             boolean requiresTwoFactor, boolean is2faSetup,
+                             List<ProfileOption> profiles) {
+            this.token = token;
+            this.type = type;
+            this.id = id;
+            this.nome = nome;
+            this.email = email;
+            this.role = role;
+            this.tenantId = tenantId;
+            this.tenantName = tenantName;
+            this.bloco = bloco;
+            this.unidade = unidade;
+            this.cpf = cpf;
+            this.requiresTwoFactor = requiresTwoFactor;
+            this.is2faSetup = is2faSetup;
+            this.profiles = profiles;
+            this.multipleProfiles = false;
+        }
+
+        // Construtor 2: Retornar lista de perfis ("Leque") - SEM TOKEN
+        public LoginResponse(boolean multipleProfiles, List<ProfileOption> profiles) {
+            this.multipleProfiles = multipleProfiles;
+            this.profiles = profiles;
+        }
+    }
 
     // NOVOS DTOs PARA O SETUP DO 2FA
     public record TwoFactorSetupResponse(String secret, String qrCodeUrl) {}

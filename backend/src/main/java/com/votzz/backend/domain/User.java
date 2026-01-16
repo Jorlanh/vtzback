@@ -9,6 +9,7 @@ import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
@@ -39,9 +40,19 @@ public class User implements UserDetails {
     private String unidade;
     private String bloco;
 
+    // Mantido para compatibilidade, mas o foco agora é a lista abaixo
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "tenant_id")
     private Tenant tenant;
+
+    // --- CORREÇÃO: Adicionando a lista de condomínios para suporte Multi-Tenant ---
+    @ManyToMany(fetch = FetchType.EAGER)
+    @JoinTable(
+        name = "user_tenants",
+        joinColumns = @JoinColumn(name = "user_id"),
+        inverseJoinColumns = @JoinColumn(name = "tenant_id")
+    )
+    private List<Tenant> tenants = new ArrayList<>();
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -52,7 +63,7 @@ public class User implements UserDetails {
 
     // --- CAMPOS 2FA ---
     @Column(name = "is_2fa_enabled")
-    private Boolean is2faEnabled = false; // Use Wrapper Boolean para evitar nulos em updates parciais
+    private Boolean is2faEnabled = false;
 
     @Column(name = "secret_2fa")
     private String secret2fa;
@@ -102,7 +113,6 @@ public class User implements UserDetails {
     @Override
     public boolean isEnabled() { return enabled; }
     
-    // Getter manual para garantir compatibilidade se o Lombok falhar no boolean 'is'
     public Boolean getIs2faEnabled() {
         return this.is2faEnabled;
     }
