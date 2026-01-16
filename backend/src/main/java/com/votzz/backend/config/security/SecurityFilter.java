@@ -15,6 +15,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.UUID;
 
 @Component
 public class SecurityFilter extends OncePerRequestFilter {
@@ -26,35 +27,77 @@ public class SecurityFilter extends OncePerRequestFilter {
     private UserRepository userRepository;
 
     @Override
-    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
+    protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
+            throws ServletException, IOException {
+
         var token = this.recoverToken(request);
 
         if (token != null) {
             var login = tokenService.validateToken(token);
 
             if (login != null && !login.isEmpty()) {
-                // CORREÇÃO PARA MULTI-TENANCY: Busca lista de perfis
+                System.out.println("SecurityFilter - Email do token: " + login);
+
+                // Busca todos os perfis com esse email
                 List<User> users = userRepository.findByEmailIgnoreCase(login);
+                System.out.println("SecurityFilter - Número de perfis encontrados: " + users.size());
 
                 if (!users.isEmpty()) {
-                    // Pega o primeiro perfil para autenticar a requisição no contexto do Spring
-                    User user = users.get(0);
+                    User selectedUser = null;
 
-                    // Extrai o tenantId do token e coloca no request para o TenantInterceptor usar como fallback
-                    String tenantId = tokenService.extractClaim(token, claims -> {
+                    // Extrai tenantId do token, se existir
+                    String tenantIdStr = tokenService.extractClaim(token, claims -> {
                         Object tid = claims.get("tenantId");
                         return tid != null ? tid.toString() : null;
                     });
-                    
-                    if (tenantId != null) {
-                        request.setAttribute("tenantId", tenantId);
+
+                    UUID tenantIdFromToken = null; // Declarado fora para ser visível na lambda
+                    if (tenantIdStr != null) {
+                        try {
+                            tenantIdFromToken = UUID.fromString(tenantIdStr);
+                            System.out.println("SecurityFilter - TenantId extraído do token: " + tenantIdFromToken);
+                        } catch (IllegalArgumentException e) {
+                            System.out.println("SecurityFilter - TenantId inválido no token: " + tenantIdStr);
+                        }
                     }
 
-                    var authentication = new UsernamePasswordAuthenticationToken(user, null, user.getAuthorities());
+                    // Tenta encontrar um usuário com tenant compatível
+                    if (tenantIdFromToken != null) {
+                        final UUID finalTenantId = tenantIdFromToken; // final para uso na lambda
+                        selectedUser = users.stream()
+                                .filter(u -> u.getTenant() != null && finalTenantId.equals(u.getTenant().getId()))
+                                .findFirst()
+                                .orElse(null);
+                    }
+
+                    // Se não encontrou pelo tenant, pega o primeiro (comportamento original)
+                    if (selectedUser == null) {
+                        selectedUser = users.get(0);
+                        System.out.println("SecurityFilter - Nenhum tenant compatível encontrado. Usando primeiro perfil.");
+                    }
+
+                    System.out.println("SecurityFilter - Usuário selecionado ID: " + selectedUser.getId());
+                    System.out.println("SecurityFilter - Tenant do usuário selecionado: " +
+                            (selectedUser.getTenant() != null ? selectedUser.getTenant().getId() : "NULL"));
+
+                    // Coloca tenant no request para outros componentes usarem
+                    if (selectedUser.getTenant() != null) {
+                        request.setAttribute("tenantId", selectedUser.getTenant().getId().toString());
+                    }
+
+                    var authentication = new UsernamePasswordAuthenticationToken(
+                            selectedUser, null, selectedUser.getAuthorities());
                     SecurityContextHolder.getContext().setAuthentication(authentication);
+                } else {
+                    System.out.println("SecurityFilter - Nenhum usuário encontrado para email: " + login);
                 }
+            } else {
+                System.out.println("SecurityFilter - Token inválido ou sem login");
             }
+        } else {
+            System.out.println("SecurityFilter - Nenhum token encontrado na requisição");
         }
+
         filterChain.doFilter(request, response);
     }
 

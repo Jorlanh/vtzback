@@ -4,7 +4,7 @@ import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.repository.UserRepository;
-import com.votzz.backend.service.AuditService; 
+import com.votzz.backend.service.AuditService;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -27,7 +27,7 @@ public class UserController {
     private PasswordEncoder passwordEncoder;
 
     @Autowired
-    private AuditService auditService; 
+    private AuditService auditService;
 
     // --- CRIAR NOVO USUÁRIO ---
     @PostMapping
@@ -40,11 +40,11 @@ public class UserController {
         if (userRepository.findByEmail(data.email()).isPresent()) {
             return ResponseEntity.badRequest().body("Email já cadastrado.");
         }
-        
+
         if (data.cpf() != null && !data.cpf().isEmpty()) {
-             boolean cpfExists = userRepository.findAll().stream()
-                 .anyMatch(u -> data.cpf().equals(u.getCpf()));
-             if(cpfExists) return ResponseEntity.badRequest().body("CPF já cadastrado no sistema.");
+            boolean cpfExists = userRepository.findAll().stream()
+                    .anyMatch(u -> data.cpf().equals(u.getCpf()));
+            if (cpfExists) return ResponseEntity.badRequest().body("CPF já cadastrado no sistema.");
         }
 
         User newUser = new User();
@@ -55,9 +55,13 @@ public class UserController {
         newUser.setUnidade(data.unidade());
         newUser.setBloco(data.bloco());
         newUser.setTenant(currentUser.getTenant());
-        
+
         if ((currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO) && data.role() != null) {
-            try { newUser.setRole(Role.valueOf(data.role())); } catch (Exception e) { newUser.setRole(Role.MORADOR); }
+            try {
+                newUser.setRole(Role.valueOf(data.role()));
+            } catch (Exception e) {
+                newUser.setRole(Role.MORADOR);
+            }
         } else {
             newUser.setRole(Role.MORADOR);
         }
@@ -70,13 +74,12 @@ public class UserController {
 
         userRepository.save(newUser);
 
-        // --- CORREÇÃO: Passando currentUser.getTenant() como targetTenant ---
         auditService.log(
-            currentUser, 
-            currentUser.getTenant(), // targetTenant
-            "CRIAR_USUARIO", 
-            "Criou o usuário " + newUser.getNome() + " (Unidade: " + newUser.getUnidade() + ")", 
-            "USUARIOS"
+                currentUser,
+                currentUser.getTenant(),
+                "CRIAR_USUARIO",
+                "Criou o usuário " + newUser.getNome() + " (Unidade: " + newUser.getUnidade() + ")",
+                "USUARIOS"
         );
 
         return ResponseEntity.ok("Usuário criado com sucesso!");
@@ -89,7 +92,7 @@ public class UserController {
         return processUpdate(id, data, currentUser);
     }
 
-    @PutMapping("/{id}") 
+    @PutMapping("/{id}")
     @Transactional
     public ResponseEntity<?> updateUserPut(@PathVariable UUID id, @RequestBody UserDTO data, @AuthenticationPrincipal User currentUser) {
         return processUpdate(id, data, currentUser);
@@ -100,15 +103,51 @@ public class UserController {
         if (userOptional.isEmpty()) return ResponseEntity.notFound().build();
 
         User user = userOptional.get();
-        StringBuilder changes = new StringBuilder(); 
+        StringBuilder changes = new StringBuilder();
 
-        if (user.getRole() == Role.ADMIN) return ResponseEntity.status(403).body("Ninguém pode alterar o Super Admin.");
-
-        // Validação de Tenant
-        if (currentUser.getTenant() != null && !currentUser.getTenant().getId().equals(user.getTenant().getId())) {
-            return ResponseEntity.status(403).body("Você não pode editar usuários de outro condomínio.");
+        if (user.getRole() == Role.ADMIN) {
+            return ResponseEntity.status(403).body("Ninguém pode alterar o Super Admin.");
         }
 
+        // ────────────────────────────────────────────────
+        // DEBUG: MOSTRA TODOS OS VALORES IMPORTANTES
+        // ────────────────────────────────────────────────
+        System.out.println("=== DEBUG processUpdate ===");
+        System.out.println("ID do path: " + id);
+        System.out.println("ID do usuário alvo (banco): " + user.getId());
+        System.out.println("ID do currentUser (token): " + currentUser.getId());
+        System.out.println("Email currentUser: " + currentUser.getEmail());
+        System.out.println("Email usuário alvo: " + user.getEmail());
+        System.out.println("Tenant currentUser: " + (currentUser.getTenant() != null ? currentUser.getTenant().getId() : "NULL"));
+        System.out.println("Tenant usuário alvo: " + (user.getTenant() != null ? user.getTenant().getId() : "NULL"));
+
+        // Auto-edição: permite se ID igual OU se email igual + tenant compatível
+        boolean isEditingSelf = currentUser.getId().equals(user.getId()) ||
+                (currentUser.getEmail().equalsIgnoreCase(user.getEmail()) &&
+                        (currentUser.getTenant() == null || user.getTenant() == null ||
+                                currentUser.getTenant().getId().equals(user.getTenant().getId())));
+
+        System.out.println("isEditingSelf (com fallback por email): " + isEditingSelf);
+        System.out.println("=== FIM DEBUG ===");
+
+        // ────────────────────────────────────────────────
+        // AUTORIZAÇÃO
+        // ────────────────────────────────────────────────
+        if (!isEditingSelf) {
+            if (currentUser.getTenant() == null) {
+                if (currentUser.getRole() != Role.ADMIN) {
+                    return ResponseEntity.status(403).body("Você precisa estar vinculado a um condomínio para editar outros usuários.");
+                }
+            }
+            if (user.getTenant() == null) {
+                return ResponseEntity.status(403).body("Usuário alvo sem condomínio associado.");
+            }
+            if (!currentUser.getTenant().getId().equals(user.getTenant().getId())) {
+                return ResponseEntity.status(403).body("Você não pode editar usuários de outro condomínio.");
+            }
+        }
+
+        // Atualização de campos cadastrais
         if (data.email() != null && !data.email().isEmpty() && !data.email().equals(user.getEmail())) {
             user.setEmail(data.email());
             changes.append("Email alterado. ");
@@ -119,43 +158,60 @@ public class UserController {
         }
         if (data.unidade() != null && !data.unidade().equals(user.getUnidade())) {
             user.setUnidade(data.unidade());
-            changes.append("Unidade mudou para " + data.unidade() + ". ");
+            changes.append("Unidade mudou. ");
         }
         if (data.bloco() != null && !data.bloco().equals(user.getBloco())) {
             user.setBloco(data.bloco());
-            changes.append("Bloco mudou para " + data.bloco() + ". ");
+            changes.append("Bloco mudou. ");
         }
 
+        // Permissão para trocar Role
         if (data.role() != null && (currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO)) {
             try {
                 Role newRole = Role.valueOf(data.role());
                 if (newRole != Role.ADMIN && newRole != user.getRole()) {
                     user.setRole(newRole);
-                    changes.append("Cargo alterado para " + newRole + ". ");
+                    changes.append("Cargo para " + newRole + ". ");
                 }
-            } catch (Exception e) {} 
+            } catch (Exception e) {
+            }
         }
 
+        // Lógica de replicação de senha
         if (data.password() != null && !data.password().isBlank()) {
-            user.setPassword(passwordEncoder.encode(data.password()));
-            changes.append("SENHA ALTERADA. ");
+            String encodedPassword = passwordEncoder.encode(data.password());
+
+            if (user.getCpf() != null && !user.getCpf().isBlank() && user.getTenant() != null) {
+                List<User> todasAsUnidades = userRepository.findAll().stream()
+                        .filter(u -> user.getCpf().equals(u.getCpf()) &&
+                                u.getTenant() != null &&
+                                u.getTenant().getId().equals(user.getTenant().getId()))
+                        .toList();
+
+                for (User unidade : todasAsUnidades) {
+                    unidade.setPassword(encodedPassword);
+                    userRepository.save(unidade);
+                }
+                changes.append("SENHA ATUALIZADA EM TODAS AS UNIDADES. ");
+            } else {
+                user.setPassword(encodedPassword);
+                changes.append("SENHA ALTERADA. ");
+            }
         }
 
         userRepository.save(user);
 
         if (!changes.isEmpty()) {
-            // --- CORREÇÃO: Passando user.getTenant() como targetTenant ---
-            // Se for Admin Votzz (sem tenant), o log vai para o tenant do usuário editado
             auditService.log(
-                currentUser, 
-                user.getTenant(), // targetTenant
-                "EDITAR_USUARIO", 
-                "Alterações em " + user.getNome() + ": " + changes.toString(), 
-                "USUARIOS"
+                    currentUser,
+                    user.getTenant(),
+                    "EDITAR_USUARIO",
+                    "Alterações em " + user.getNome() + ": " + changes.toString(),
+                    "USUARIOS"
             );
         }
 
-        return ResponseEntity.ok("Dados atualizados.");
+        return ResponseEntity.ok("Dados atualizados com sucesso.");
     }
 
     @GetMapping
@@ -169,25 +225,25 @@ public class UserController {
                 .toList();
         return ResponseEntity.ok(users);
     }
-    
+
     @PatchMapping("/{id}/role")
+    @Transactional
     public ResponseEntity<?> promoteUser(@PathVariable UUID id, @RequestBody java.util.Map<String, String> payload, @AuthenticationPrincipal User currentUser) {
         User user = userRepository.findById(id).orElseThrow();
         String newRoleStr = payload.get("role");
-        
-        if("MANAGER".equals(newRoleStr) || "ADM_CONDO".equals(newRoleStr)) {
-            user.setRole(Role.ADM_CONDO); 
+
+        if ("MANAGER".equals(newRoleStr) || "ADM_CONDO".equals(newRoleStr)) {
+            user.setRole(Role.ADM_CONDO);
             userRepository.save(user);
-            
-            // --- CORREÇÃO: Passando user.getTenant() como targetTenant ---
+
             auditService.log(
-                currentUser, 
-                user.getTenant(), // targetTenant
-                "PROMOVER_USUARIO", 
-                "Promoveu " + user.getNome() + " a Admin", 
-                "USUARIOS"
+                    currentUser,
+                    user.getTenant(),
+                    "PROMOVER_USUARIO",
+                    "Promoveu " + user.getNome() + " a Admin",
+                    "USUARIOS"
             );
-            
+
             return ResponseEntity.ok().build();
         }
         return ResponseEntity.badRequest().build();
