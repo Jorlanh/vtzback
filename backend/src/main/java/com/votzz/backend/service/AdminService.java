@@ -18,7 +18,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
-import java.time.LocalDate; // Importante para dataExpiracaoPlano
+import java.time.LocalDate; 
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -110,11 +110,19 @@ public class AdminService {
             if (u.getRole() == Role.ADMIN || u.getRole() == Role.AFILIADO) continue;
 
             UserDTO dto = mapToDTO(u);
-            if (u.getTenants().isEmpty()) {
+            
+            // CORREÇÃO: Verifica tanto a lista quanto o tenant singular para determinar as pastas
+            Set<Tenant> userTenants = new HashSet<>();
+            if (u.getTenants() != null) userTenants.addAll(u.getTenants());
+            if (u.getTenant() != null) userTenants.add(u.getTenant());
+
+            if (userTenants.isEmpty()) {
                 pastas.get("Sem Condomínio").add(dto);
             } else {
-                for (Tenant t : u.getTenants()) {
+                for (Tenant t : userTenants) {
                     if (pastas.containsKey(t.getNome())) {
+                        // Evita duplicatas visuais na mesma pasta se o DTO for o mesmo
+                        // (Geralmente não é problema pois é nova instância, mas idealmente DTO deve ser único)
                         pastas.get(t.getNome()).add(dto);
                     }
                 }
@@ -129,9 +137,12 @@ public class AdminService {
 
     @Transactional
     public void createUserLinked(CreateUserRequest dto) {
+        // Verifica se o e-mail existe. Se existir, lançamos erro.
+        // Se a intenção fosse "vincular", teria que usar outra rota, 
+        // mas como é "criar", barramos duplicidade de e-mail aqui.
         User existingUser = userRepository.findByEmail(dto.email()).orElse(null);
         if (existingUser != null) {
-             throw new RuntimeException("E-mail já está em uso. Para vincular um usuário existente a este condomínio, use a função de convite (Futura implementação).");
+             throw new RuntimeException("E-mail já está em uso. Este usuário já existe no sistema.");
         }
 
         if (dto.cpf() != null && !dto.cpf().isEmpty()) {
@@ -153,6 +164,7 @@ public class AdminService {
         
         user.setTenants(new ArrayList<>());
         user.getTenants().add(tenant);
+        user.setTenant(tenant); // CORREÇÃO: Define também o tenant principal
         
         user.setUnidade(dto.unidade());
         user.setBloco(dto.bloco());
@@ -188,17 +200,14 @@ public class AdminService {
         tenant.setEstado(dto.estado());
         tenant.setPontoReferencia(dto.pontoReferencia());
         
-        // CORREÇÃO: Uso de LocalDate em vez de LocalDateTime
         if(dto.dataExpiracaoPlano() != null) {
             tenant.setDataExpiracaoPlano(dto.dataExpiracaoPlano());
         } else {
-            // Padrão 1 ano se não informado
             tenant.setDataExpiracaoPlano(LocalDate.now().plusYears(1)); 
         }
 
         tenant = tenantRepository.save(tenant);
 
-        // --- LÓGICA MULTI-TENANT PARA SÍNDICO ---
         User syndic = userRepository.findByEmail(dto.emailSyndic()).orElse(null);
 
         if (syndic != null) {
@@ -216,7 +225,6 @@ public class AdminService {
                 syndic.setRole(Role.SINDICO);
             }
             
-            // Opcional: Atualiza o tenant 'default' para o mais recente
             syndic.setTenant(tenant); 
 
         } else {
@@ -231,7 +239,7 @@ public class AdminService {
             
             syndic.setTenants(new ArrayList<>());
             syndic.getTenants().add(tenant);
-            syndic.setTenant(tenant); // Define padrão
+            syndic.setTenant(tenant);
             
             syndic.setUnidade("ADM");
             syndic.setBloco("ADM");
@@ -277,7 +285,6 @@ public class AdminService {
             changed = true;
         }
 
-        // CORREÇÃO: Uso de LocalDate
         if (dto.dataExpiracaoPlano() != null) {
             tenant.setDataExpiracaoPlano(dto.dataExpiracaoPlano());
             detailsLog.append("Validade Manual -> ").append(dto.dataExpiracaoPlano()).append(". ");
@@ -399,7 +406,6 @@ public class AdminService {
             user.setPassword(passwordEncoder.encode(req.newPassword()));
         }
         
-        // --- AQUI ESTÁ A LÓGICA QUE VOCÊ PEDIU PARA ADICIONAR (MOVIMENTAÇÃO DE CONDOMÍNIO) ---
         if (req.tenantId() != null && !req.tenantId().isBlank()) {
             try {
                 UUID newTenantUUID = UUID.fromString(req.tenantId());
@@ -455,10 +461,16 @@ public class AdminService {
         String tenantName = "Sem Condomínio";
         UUID tenantId = null;
         
-        if (!u.getTenants().isEmpty()) {
-            Tenant t = u.getTenants().get(0);
-            tenantName = t.getNome() + (u.getTenants().size() > 1 ? " (+" + (u.getTenants().size()-1) + ")" : "");
-            tenantId = t.getId();
+        // CORREÇÃO: Pega o tenant principal ou o primeiro da lista
+        Tenant mainTenant = u.getTenant();
+        if (mainTenant == null && !u.getTenants().isEmpty()) {
+            mainTenant = u.getTenants().get(0);
+        }
+
+        if (mainTenant != null) {
+            int extraCount = Math.max(0, u.getTenants().size() - 1);
+            tenantName = mainTenant.getNome() + (extraCount > 0 ? " (+" + extraCount + ")" : "");
+            tenantId = mainTenant.getId();
         }
 
         return new UserDTO(
