@@ -27,7 +27,6 @@ public class Vote extends BaseEntity {
     @ToString.Exclude
     private Assembly assembly;
 
-    // CORREÇÃO AQUI: Ignora as propriedades do Proxy do Hibernate no User
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "user_id", nullable = false)
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
@@ -35,6 +34,9 @@ public class Vote extends BaseEntity {
 
     @Column(name = "option_id", nullable = false) 
     private String optionId; 
+
+    @Column(name = "unidade") // REGISTRA A UNIDADE ESPECÍFICA (EX: Bloco A 202)
+    private String unidade;
 
     @Column(name = "hash") 
     private String hash; 
