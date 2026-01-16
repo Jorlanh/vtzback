@@ -53,7 +53,8 @@ public class AuthController {
         "yahoo.com", 
         "icloud.com", 
         "me.com",
-        "codecloudcorp.com"
+        "codecloudcorp.com",
+        "votzz.com"
     );
 
     // --- HELPER: Validação de Email ---
@@ -193,7 +194,8 @@ public class AuthController {
         selectedUser.setLastSeen(LocalDateTime.now());
         userRepository.save(selectedUser);
 
-        String token = tokenService.generateToken(selectedUser);
+        // ALTERAÇÃO: Passa o 'keepLogged' para o TokenService
+        String token = tokenService.generateToken(selectedUser, request.keepLogged());
 
         return ResponseEntity.ok(new LoginResponse(
             token, "Bearer", selectedUser.getId().toString(), selectedUser.getNome(), selectedUser.getEmail(),

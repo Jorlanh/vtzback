@@ -1,18 +1,18 @@
 package com.votzz.backend.dto;
 
 import java.util.List;
-import java.util.UUID;
 
 public class AuthDTOs {
 
-    // Request atualizado com deviceId e trustDevice para a lógica de "Lembrar navegador"
+    // Request atualizado com deviceId, trustDevice e keepLogged
     public record LoginRequest(
         String login, 
         String password, 
         String selectedProfileId,
         Integer code2fa, 
         String deviceId,    // ID do navegador/dispositivo
-        boolean trustDevice // Checkbox "Não pedir novamente por 30 dias"
+        boolean trustDevice, // Checkbox "Não pedir novamente por 30 dias" (2FA)
+        boolean keepLogged   // Checkbox "Mantenha-me conectado" (Sessão longa)
     ) {}
 
     // DTO para as opções de perfil

@@ -38,7 +38,6 @@ public class AdminService {
 
     private static final String MASTER_ADMIN_ID = "10000000-0000-0000-0000-000000000000";
 
-    // --- 1: AUDITORIA FILTRADA (Só Admins) ---
     public List<AuditLog> listAuditLogs() {
         return auditLogRepository.findAll().stream()
                 .filter(log -> {
@@ -55,42 +54,27 @@ public class AdminService {
                 .collect(Collectors.toList());
     }
 
-    // --- 2: STATS E MRR (Cálculo Corrigido) ---
     public AdminDashboardStats getDashboardStats() {
         long totalUsers = userRepository.count();
         long onlineUsers = userRepository.countOnlineUsers(LocalDateTime.now().minusMinutes(5));
-
-        // Contagem bruta de condomínios
         long totalTenants = tenantRepository.count();
-
-        // Contagem de ativos
         long activeTenants = tenantRepository.countByAtivoTrue();
 
-        // Cálculo do MRR: Pega TODOS os ativos que têm plano
         List<Tenant> activeTenantsList = tenantRepository.findByAtivoTrue();
-
         BigDecimal mrr = BigDecimal.ZERO;
 
         for (Tenant t : activeTenantsList) {
-            // Só soma se tiver plano e preço configurado
             if (t.getPlano() != null && t.getPlano().getPrecoBase() != null) {
                 BigDecimal preco = t.getPlano().getPrecoBase();
-
-                // Se o plano é anual, divide por 12 para achar o MRR (Monthly Recurring Revenue)
                 if (t.getPlano().getCiclo() == Plano.Ciclo.ANUAL) {
                     mrr = mrr.add(preco.divide(new BigDecimal("12"), 2, RoundingMode.HALF_EVEN));
                 } else {
-                    // Assume mensal
                     mrr = mrr.add(preco);
                 }
             }
         }
-
-        // Retorna o DTO com os campos corretos mapeados
         return new AdminDashboardStats(totalUsers, onlineUsers, totalTenants, activeTenants, mrr);
     }
-
-    // --- MÉTODOS DE LISTAGEM ---
 
     public List<UserDTO> listAllAdmins() {
         return userRepository.findAll().stream()
@@ -135,14 +119,11 @@ public class AdminService {
         return resp;
     }
 
-    // --- CRIAÇÃO E EDIÇÃO ---
-
     @Transactional
     public void createUserLinked(CreateUserRequest dto) {
         if (userRepository.findByEmail(dto.email()).isPresent()) {
             throw new RuntimeException("E-mail já está em uso.");
         }
-
         if (dto.cpf() != null && !dto.cpf().isEmpty()) {
             boolean cpfExists = userRepository.findAll().stream()
                     .anyMatch(u -> dto.cpf().equals(u.getCpf()));
@@ -169,8 +150,16 @@ public class AdminService {
 
     @Transactional
     public void createTenantManual(ManualTenantDTO dto) {
-        Plano plano = planoRepository.findAll().stream().findFirst()
-                .orElseThrow(() -> new RuntimeException("ERRO: Nenhum Plano cadastrado no sistema."));
+        Plano plano = null;
+        // CORREÇÃO: Tenta buscar o plano pelo nome enviado (ex: ESSENCIAL_MENSAL)
+        if (dto.plano() != null && !dto.plano().isBlank()) {
+            plano = planoRepository.findByNomeIgnoreCase(dto.plano())
+                    .orElseThrow(() -> new RuntimeException("Plano não encontrado no sistema: " + dto.plano()));
+        } else {
+            // Fallback se não vier nada
+            plano = planoRepository.findAll().stream().findFirst()
+                    .orElseThrow(() -> new RuntimeException("ERRO: Nenhum Plano cadastrado no sistema (DB vazio)."));
+        }
 
         if (userRepository.findByEmail(dto.emailSyndic()).isPresent())
             throw new RuntimeException("E-mail do síndico já cadastrado.");
@@ -203,7 +192,7 @@ public class AdminService {
         syndic.setUnidade("ADM");
         userRepository.save(syndic);
 
-        logAction("CRIAR_CONDOMINIO", "Criou condomínio " + tenant.getNome() + " e síndico " + syndic.getNome());
+        logAction("CRIAR_CONDOMINIO", "Criou condomínio " + tenant.getNome() + " e síndico " + syndic.getNome() + " com plano " + plano.getNome());
     }
 
     @Transactional
@@ -264,7 +253,7 @@ public class AdminService {
     @Transactional
     public void softDeleteTenant(UUID tenantId) {
         Tenant tenant = tenantRepository.findById(tenantId).orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
-        tenant.setAtivo(false); // SOFT DELETE
+        tenant.setAtivo(false); 
         tenantRepository.save(tenant);
         logAction("EXCLUIR_CONDOMINIO", "Soft Delete (Desativou) condomínio: " + tenant.getNome());
     }
@@ -369,8 +358,6 @@ public class AdminService {
         logAction("EDITAR_USUARIO", "Em " + user.getNome() + ": " + details);
     }
 
-    // --- UTILITÁRIOS ---
-
     private void logAction(String action, String details) {
         try {
             User currentUser = getCurrentUser();
@@ -380,7 +367,7 @@ public class AdminService {
             log.setUserId(currentUser.getId().toString());
             log.setUserName(currentUser.getNome());
             log.setDetails(details);
-            log.setResourceType("ADMIN_PANEL"); // Tag essencial para o filtro
+            log.setResourceType("ADMIN_PANEL"); 
             auditLogRepository.save(log);
         } catch (Exception e) {
             System.err.println("Erro ao salvar log de auditoria: " + e.getMessage());

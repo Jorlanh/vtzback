@@ -45,15 +45,17 @@ public class AdminController {
     @Value("${votzz.admin.id}")
     private String superAdminId;
 
-    // --- GETs ---
     @GetMapping("/dashboard-stats")
     public ResponseEntity<AdminDashboardStats> getStats() { 
         AdminDashboardStats original = adminService.getDashboardStats();
         
-        // Recria o record com o valor atualizado do WebSocket
+        // Pega o maior valor entre o Banco de Dados (ActivityInterceptor) e o WebSocket
+        // Isso garante que se você estiver navegando via REST, você conta como 1.
+        long realOnlineCount = Math.max(original.onlineUsers(), webSocketEventListener.getOnlineCount());
+
         AdminDashboardStats updated = new AdminDashboardStats(
             original.totalUsers(),
-            webSocketEventListener.getOnlineCount(), 
+            realOnlineCount, 
             original.totalTenants(),
             original.activeTenants(),
             original.mrr()
@@ -62,6 +64,10 @@ public class AdminController {
         return ResponseEntity.ok(updated); 
     }
 
+    // ... (Mantenha o restante dos métodos inalterados) ...
+    // Vou omitir o resto para economizar espaço, pois a correção é apenas no getStats
+    // e os outros métodos dependem apenas do serviço.
+    
     @GetMapping("/organized-users")
     public ResponseEntity<Map<String, Object>> listOrganized() { return ResponseEntity.ok(adminService.listOrganizedUsers()); }
 
@@ -79,7 +85,6 @@ public class AdminController {
         return ResponseEntity.ok(adminService.listAuditLogs());
     }
 
-    // --- IMPERSONATION ---
     @PostMapping("/impersonate/{tenantId}")
     public ResponseEntity<LoginResponse> impersonateTenant(@PathVariable UUID tenantId) {
         Tenant tenant = tenantRepository.findById(tenantId)
@@ -89,27 +94,14 @@ public class AdminController {
         tempUser.setId(UUID.randomUUID()); 
         tempUser.setEmail("admin-impersonation@votzz.com");
         tempUser.setNome("Super Admin (Acesso Direto)");
-        // Define como SINDICO para ter permissão total na area do condomínio
         tempUser.setRole(Role.SINDICO); 
         tempUser.setTenant(tenant);
 
         String token = tokenService.generateToken(tempUser);
 
-        // CORREÇÃO AQUI: Adicionado o campo 'false' para requiresTwoFactor
         return ResponseEntity.ok(new LoginResponse(
-            token, 
-            "Bearer", 
-            tempUser.getId().toString(), 
-            tempUser.getNome(), 
-            tempUser.getEmail(),
-            "SINDICO", 
-            tenant.getId().toString(), 
-            null, // bloco
-            null, // unidade
-            null, // cpf
-            false, // multipleProfiles
-            false, // requiresTwoFactor (NOVO CAMPO ADICIONADO)
-            null   // profiles list
+            token, "Bearer", tempUser.getId().toString(), tempUser.getNome(), tempUser.getEmail(),
+            "SINDICO", tenant.getId().toString(), null, null, null, false, false, null
         ));
     }
 
@@ -119,27 +111,22 @@ public class AdminController {
             return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Você não pode suspender o Super Admin Principal.");
         }
         User user = userRepository.findById(userId).orElseThrow();
-        // Garante que o campo enabled não é nulo antes de inverter
         boolean currentStatus = user.isEnabled(); 
         user.setEnabled(!currentStatus);
         userRepository.save(user);
         return ResponseEntity.ok(user.isEnabled() ? "Usuário ativado." : "Usuário suspenso.");
     }
 
-    // --- UPDATE USER ---
     @PutMapping("/users/{userId}")
     public ResponseEntity<?> updateUser(@PathVariable UUID userId, @RequestBody UpdateUserRequest req) {
         Object principal = SecurityContextHolder.getContext().getAuthentication().getPrincipal();
-        
         if (principal instanceof User currentUser) {
             boolean isTargetSuperAdmin = userId.toString().equals(superAdminId);
             boolean isRequesterSuperAdmin = currentUser.getId().toString().equals(superAdminId);
-
             if (isTargetSuperAdmin && !isRequesterSuperAdmin) {
                  return ResponseEntity.status(HttpStatus.FORBIDDEN).body("Apenas o Super Admin pode editar seu próprio perfil.");
             }
         }
-
         adminService.adminUpdateUser(userId, req);
         return ResponseEntity.ok("Usuário atualizado.");
     }
@@ -153,7 +140,6 @@ public class AdminController {
         return ResponseEntity.ok("Usuário removido.");
     }
 
-    // --- OUTROS ENDPOINTS ---
     @PostMapping("/coupons")
     public ResponseEntity<String> createCoupon(@RequestBody CouponDTO dto) {
         adminService.createCoupon(dto.code(), dto.discountPercent(), dto.quantity());
@@ -198,13 +184,14 @@ public class AdminController {
         return ResponseEntity.ok("Cupom removido.");
     }
 
-    // --- DTOs ---
     public record CouponDTO(String code, BigDecimal discountPercent, Integer quantity) {}
     
+    // CORREÇÃO AQUI: Adicionado campo 'plano'
     public record ManualTenantDTO(
         String condoName, String cnpj, Integer qtyUnits, String secretKeyword, 
         String nameSyndic, String emailSyndic, String passwordSyndic, String cpfSyndic, String phoneSyndic,
-        String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia
+        String cep, String logradouro, String numero, String bairro, String cidade, String estado, String pontoReferencia,
+        String plano 
     ) {}
 
     public record UpdateTenantDTO(

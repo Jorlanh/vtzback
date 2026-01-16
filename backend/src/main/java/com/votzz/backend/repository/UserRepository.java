@@ -16,25 +16,22 @@ import java.util.UUID;
 @Repository
 public interface UserRepository extends JpaRepository<User, UUID> {
     
-    // Busca um único (idealmente o Admin Global ou o primeiro encontrado)
     Optional<User> findByEmailOrCpf(String email, String cpf);
-    
     Optional<User> findByEmail(String email);
     boolean existsByEmail(String email);
     boolean existsByCpf(String cpf);
 
-    // NOVO: Busca TODOS os usuários com esse login (para o seletor de perfil)
-    // Isso permite que um mesmo email/cpf retorne múltiplas linhas (ex: Morador X, Morador Y, Afiliado)
     List<User> findAllByEmailOrCpf(String email, String cpf);
-
     List<User> findByTenantId(UUID tenantId);
     long countByTenantId(UUID tenantId);
 
+    // Mantido para compatibilidade, mas o Interceptor agora usa save()
     @Modifying
     @Transactional
     @Query("UPDATE User u SET u.lastSeen = :now WHERE u.email = :email")
     void updateLastSeen(@Param("email") String email, @Param("now") LocalDateTime now);
 
-    @Query("SELECT COUNT(u) FROM User u WHERE u.lastSeen > :limit")
+    // Query corrigida para pegar usuários ativos a partir do tempo limite
+    @Query("SELECT COUNT(u) FROM User u WHERE u.lastSeen >= :limit")
     long countOnlineUsers(@Param("limit") LocalDateTime limit);
 }
