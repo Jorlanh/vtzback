@@ -1,22 +1,24 @@
 package com.votzz.backend.controller;
 
+import com.votzz.backend.core.tenant.TenantContext;
 import com.votzz.backend.domain.CondoFinancial;
 import com.votzz.backend.domain.FinancialReport;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.repository.CondoFinancialRepository;
 import com.votzz.backend.repository.FinancialReportRepository;
-import com.votzz.backend.service.FileStorageService; 
+import com.votzz.backend.service.FileStorageService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
-import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.stream.Collectors;
 
 @RestController
@@ -29,77 +31,101 @@ public class FinancialController {
     private final FinancialReportRepository reportRepository;
     private final FileStorageService fileStorageService;
 
-    // --- SALDO (CORRIGIDO VAZAMENTO) ---
+    // --- SALDO ---
     @GetMapping("/balance")
     public ResponseEntity<CondoFinancial> getBalance(@AuthenticationPrincipal User user) {
-        if(user.getTenant() == null) {
-            // Retorna objeto vazio se não tiver tenant, mas com 200 OK
-            return ResponseEntity.ok(new CondoFinancial());
-        }
+        UUID tenantId = TenantContext.getCurrentTenant();
         
-        // CORREÇÃO CRÍTICA: Busca APENAS pelo ID do Tenant do usuário logado
-        return financialRepository.findByTenantId(user.getTenant().getId())
+        if (tenantId == null) {
+            // Se por algum motivo o contexto não foi setado, usa o tenant do usuário como fallback
+            if (user.getTenant() == null) {
+                return ResponseEntity.ok(new CondoFinancial());
+            }
+            tenantId = user.getTenant().getId();
+        }
+
+        return financialRepository.findByTenantId(tenantId)
                 .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.ok(new CondoFinancial())); // Retorna vazio se ainda não tiver registro, mas não vaza o global
+                .orElseGet(() -> ResponseEntity.ok(new CondoFinancial()));
     }
 
     @PostMapping("/update")
     @Transactional
-    public ResponseEntity<CondoFinancial> updateBalance(@RequestBody Map<String, BigDecimal> payload, @AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) return ResponseEntity.status(403).build();
+    public ResponseEntity<CondoFinancial> updateBalance(
+            @RequestBody Map<String, BigDecimal> payload,
+            @AuthenticationPrincipal User user) {
 
-        // Busca o registro existente do tenant OU cria um novo vinculado a ele
-        CondoFinancial fin = financialRepository.findByTenantId(user.getTenant().getId())
-                .orElse(new CondoFinancial());
-        
-        // Garante o vínculo correto com o Tenant
-        if (fin.getTenant() == null) {
-            fin.setTenant(user.getTenant());
+        UUID tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            if (user.getTenant() == null) {
+                return ResponseEntity.status(403).body(null);
+            }
+            tenantId = user.getTenant().getId();
         }
+
+        CondoFinancial fin = financialRepository.findByTenantId(tenantId)
+                .orElseGet(() -> {
+                    CondoFinancial newFin = new CondoFinancial();
+                    newFin.setTenant(user.getTenant()); // só cria se não existir
+                    return newFin;
+                });
 
         fin.setBalance(payload.get("balance"));
         fin.setLastUpdate(LocalDateTime.now());
         fin.setUpdatedBy(user.getNome());
-        
+
         return ResponseEntity.ok(financialRepository.save(fin));
     }
 
-    // --- RELATÓRIOS (PDFs) ---
-
+    // --- RELATÓRIOS ---
     @GetMapping("/reports")
     public ResponseEntity<List<ReportDTO>> listReports(@AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) return ResponseEntity.ok(List.of());
+        UUID tenantId = TenantContext.getCurrentTenant();
+        
+        if (tenantId == null) {
+            tenantId = user.getTenant() != null ? user.getTenant().getId() : null;
+        }
 
-        // Garante filtro por Tenant ID
-        List<FinancialReport> reports = reportRepository.findByTenantIdOrderByYearDescCreatedAtDesc(user.getTenant().getId());
+        if (tenantId == null) {
+            return ResponseEntity.ok(List.of());
+        }
+
+        List<FinancialReport> reports = reportRepository.findByTenantIdOrderByYearDescCreatedAtDesc(tenantId);
         
         List<ReportDTO> dtos = reports.stream()
-            .limit(12)
-            .map(r -> new ReportDTO(r.getId().toString(), r.getMonth(), r.getYear(), r.getFileName(), r.getUrl()))
-            .collect(Collectors.toList());
+                .limit(12)
+                .map(r -> new ReportDTO(r.getId().toString(), r.getMonth(), r.getYear(), r.getFileName(), r.getUrl()))
+                .collect(Collectors.toList());
 
         return ResponseEntity.ok(dtos);
     }
 
     @PostMapping("/reports/upload")
-    public ResponseEntity<?> uploadReport(
+    @Transactional
+    public ResponseEntity<String> uploadReport(
             @RequestParam("file") MultipartFile file,
             @RequestParam("month") String month,
             @RequestParam("year") int year,
-            @AuthenticationPrincipal User user
-    ) {
-        if (user.getTenant() == null) return ResponseEntity.badRequest().body("Usuário sem condomínio.");
+            @AuthenticationPrincipal User user) {
+
+        UUID tenantId = TenantContext.getCurrentTenant();
+        if (tenantId == null) {
+            if (user.getTenant() == null) {
+                return ResponseEntity.badRequest().body("Usuário sem condomínio associado.");
+            }
+            tenantId = user.getTenant().getId();
+        }
 
         try {
-            String fileUrl = fileStorageService.uploadFile(file); 
+            String fileUrl = fileStorageService.uploadFile(file);
 
             FinancialReport report = new FinancialReport();
-            report.setTenant(user.getTenant()); // Vincula ao tenant correto
+            report.setTenant(user.getTenant()); // mantém vínculo direto com entity
             report.setMonth(month);
             report.setYear(year);
             report.setFileName(file.getOriginalFilename());
             report.setUrl(fileUrl);
-            
+
             reportRepository.save(report);
 
             return ResponseEntity.ok("Relatório salvo com sucesso!");

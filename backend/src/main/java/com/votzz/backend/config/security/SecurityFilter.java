@@ -1,5 +1,6 @@
 package com.votzz.backend.config.security;
 
+import com.votzz.backend.core.tenant.TenantContext;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.repository.UserRepository;
 import com.votzz.backend.service.TokenService;
@@ -32,73 +33,70 @@ public class SecurityFilter extends OncePerRequestFilter {
 
         var token = this.recoverToken(request);
 
-        if (token != null) {
-            var login = tokenService.validateToken(token);
+        try {
+            if (token != null) {
+                var login = tokenService.validateToken(token);
 
-            if (login != null && !login.isEmpty()) {
-                System.out.println("SecurityFilter - Email do token: " + login);
+                if (login != null && !login.isEmpty()) {
+                    List<User> users = userRepository.findByEmailIgnoreCase(login);
 
-                // Busca todos os perfis com esse email
-                List<User> users = userRepository.findByEmailIgnoreCase(login);
-                System.out.println("SecurityFilter - Número de perfis encontrados: " + users.size());
+                    if (!users.isEmpty()) {
+                        User selectedUser = null;
 
-                if (!users.isEmpty()) {
-                    User selectedUser = null;
+                        // 1. Tenta pegar tenantId do token
+                        String tenantIdStr = tokenService.extractClaim(token, claims -> {
+                            Object tid = claims.get("tenantId");
+                            return tid != null ? tid.toString() : null;
+                        });
 
-                    // Extrai tenantId do token, se existir
-                    String tenantIdStr = tokenService.extractClaim(token, claims -> {
-                        Object tid = claims.get("tenantId");
-                        return tid != null ? tid.toString() : null;
-                    });
+                        UUID tenantIdFromToken = null;
+                        if (tenantIdStr != null) {
+                            try {
+                                tenantIdFromToken = UUID.fromString(tenantIdStr);
+                            } catch (IllegalArgumentException e) {
+                                // Ignora
+                            }
+                        }
 
-                    UUID tenantIdFromToken = null; // Declarado fora para ser visível na lambda
-                    if (tenantIdStr != null) {
-                        try {
-                            tenantIdFromToken = UUID.fromString(tenantIdStr);
-                            System.out.println("SecurityFilter - TenantId extraído do token: " + tenantIdFromToken);
-                        } catch (IllegalArgumentException e) {
-                            System.out.println("SecurityFilter - TenantId inválido no token: " + tenantIdStr);
+                        // 2. Filtra o usuário correto
+                        if (tenantIdFromToken != null) {
+                            final UUID finalTenantId = tenantIdFromToken;
+                            selectedUser = users.stream()
+                                    .filter(u -> u.getTenant() != null && finalTenantId.equals(u.getTenant().getId()))
+                                    .findFirst()
+                                    .orElse(null);
+                        }
+
+                        // 3. Fallback
+                        if (selectedUser == null) {
+                            selectedUser = users.get(0);
+                        }
+
+                        // 4. Autenticação
+                        var authentication = new UsernamePasswordAuthenticationToken(
+                                selectedUser, null, selectedUser.getAuthorities());
+                        SecurityContextHolder.getContext().setAuthentication(authentication);
+
+                        // 5. INJEÇÃO DO CONTEXTO (CORRIGIDA)
+                        if (selectedUser.getTenant() != null) {
+                            UUID tenantId = selectedUser.getTenant().getId();
+                            
+                            // Define no Contexto Estático (CORRIGIDO PARA setTenant)
+                            TenantContext.setTenant(tenantId);
+                            
+                            // Define nos atributos da requisição (para Controllers que usam @RequestAttribute)
+                            request.setAttribute("tenantId", tenantId);
+                            request.setAttribute("tenant-id", tenantId);
+                            request.setAttribute("X-Tenant-ID", tenantId.toString());
                         }
                     }
-
-                    // Tenta encontrar um usuário com tenant compatível
-                    if (tenantIdFromToken != null) {
-                        final UUID finalTenantId = tenantIdFromToken; // final para uso na lambda
-                        selectedUser = users.stream()
-                                .filter(u -> u.getTenant() != null && finalTenantId.equals(u.getTenant().getId()))
-                                .findFirst()
-                                .orElse(null);
-                    }
-
-                    // Se não encontrou pelo tenant, pega o primeiro (comportamento original)
-                    if (selectedUser == null) {
-                        selectedUser = users.get(0);
-                        System.out.println("SecurityFilter - Nenhum tenant compatível encontrado. Usando primeiro perfil.");
-                    }
-
-                    System.out.println("SecurityFilter - Usuário selecionado ID: " + selectedUser.getId());
-                    System.out.println("SecurityFilter - Tenant do usuário selecionado: " +
-                            (selectedUser.getTenant() != null ? selectedUser.getTenant().getId() : "NULL"));
-
-                    // Coloca tenant no request para outros componentes usarem
-                    if (selectedUser.getTenant() != null) {
-                        request.setAttribute("tenantId", selectedUser.getTenant().getId().toString());
-                    }
-
-                    var authentication = new UsernamePasswordAuthenticationToken(
-                            selectedUser, null, selectedUser.getAuthorities());
-                    SecurityContextHolder.getContext().setAuthentication(authentication);
-                } else {
-                    System.out.println("SecurityFilter - Nenhum usuário encontrado para email: " + login);
                 }
-            } else {
-                System.out.println("SecurityFilter - Token inválido ou sem login");
             }
-        } else {
-            System.out.println("SecurityFilter - Nenhum token encontrado na requisição");
+            filterChain.doFilter(request, response);
+        } finally {
+            // Limpa o contexto para evitar vazamento de memória
+            TenantContext.clear();
         }
-
-        filterChain.doFilter(request, response);
     }
 
     private String recoverToken(HttpServletRequest request) {

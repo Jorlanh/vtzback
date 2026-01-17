@@ -52,7 +52,7 @@ public class AssemblyController {
                 return ResponseEntity.ok(assemblyRepository.findAll());
             }
 
-            UUID tenantId = TenantContext.getTenant();
+            UUID tenantId = TenantContext.getCurrentTenant();
             if (tenantId == null && currentUser.getTenant() != null) {
                 tenantId = currentUser.getTenant().getId();
             }
@@ -78,7 +78,7 @@ public class AssemblyController {
         try {
             if (currentUser == null) return ResponseEntity.status(401).body("Usuário não autenticado.");
 
-            UUID tenantId = TenantContext.getTenant();
+            UUID tenantId = TenantContext.getCurrentTenant();
             if (tenantId == null && currentUser.getTenant() != null) {
                 tenantId = currentUser.getTenant().getId();
             }

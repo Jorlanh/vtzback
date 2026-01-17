@@ -1,5 +1,6 @@
 package com.votzz.backend.controller;
 
+import com.votzz.backend.core.tenant.TenantContext;
 import com.votzz.backend.domain.AuditLog;
 import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
@@ -40,23 +41,28 @@ public class TenantController {
 
     // --- SALVAR DADOS BANCÁRIOS ---
     @PostMapping("/bank-info")
-    public ResponseEntity<?> saveBankInfo(@RequestBody BankInfoDTO dto, @AuthenticationPrincipal User user) {
-        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN && user.getRole() != Role.ADM_CONDO) {
-            return ResponseEntity.status(403).body("Apenas síndicos podem configurar dados bancários.");
+    public ResponseEntity<String> saveBankInfo(@RequestBody BankInfoDTO dto, @AuthenticationPrincipal User user) {
+        UUID tenantId = resolveTenantId(user);
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().body("Usuário sem condomínio vinculado.");
         }
 
-        Tenant tenant = user.getTenant();
-        if (tenant == null) return ResponseEntity.badRequest().body("Usuário sem condomínio vinculado.");
-        
+        if (!hasManagerRole(user)) {
+            return ResponseEntity.status(403).body("Apenas síndicos ou admins podem configurar dados bancários.");
+        }
+
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+
         tenant.setBanco(dto.bankName());
         tenant.setAgencia(dto.agency());
         tenant.setConta(dto.account());
         tenant.setChavePix(dto.pixKey());
-        
-        if(dto.asaasWalletId() != null && !dto.asaasWalletId().isBlank()){
+
+        if (dto.asaasWalletId() != null && !dto.asaasWalletId().isBlank()) {
             tenant.setAsaasWalletId(dto.asaasWalletId());
         }
-        
+
         tenantRepository.save(tenant);
         return ResponseEntity.ok("Dados bancários atualizados com sucesso.");
     }
@@ -64,121 +70,173 @@ public class TenantController {
     // --- OBTER DADOS BANCÁRIOS ---
     @GetMapping("/bank-info")
     public ResponseEntity<BankInfoDTO> getBankInfo(@AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) {
-            // Retorna vazio em vez de erro para não quebrar o frontend
+        UUID tenantId = resolveTenantId(user);
+        if (tenantId == null) {
             return ResponseEntity.ok(new BankInfoDTO("", "", "", "", ""));
         }
-        
-        Tenant t = user.getTenant();
+
+        Tenant tenant = tenantRepository.findById(tenantId).orElse(null);
+        if (tenant == null) {
+            return ResponseEntity.ok(new BankInfoDTO("", "", "", "", ""));
+        }
+
         return ResponseEntity.ok(new BankInfoDTO(
-            t.getBanco() != null ? t.getBanco() : "",
-            t.getAgencia() != null ? t.getAgencia() : "",
-            t.getConta() != null ? t.getConta() : "",
-            t.getChavePix() != null ? t.getChavePix() : "",
-            t.getAsaasWalletId() != null ? t.getAsaasWalletId() : ""
+                tenant.getBanco() != null ? tenant.getBanco() : "",
+                tenant.getAgencia() != null ? tenant.getAgencia() : "",
+                tenant.getConta() != null ? tenant.getConta() : "",
+                tenant.getChavePix() != null ? tenant.getChavePix() : "",
+                tenant.getAsaasWalletId() != null ? tenant.getAsaasWalletId() : ""
         ));
     }
 
-    // --- CORREÇÃO DO ERRO 400 NO DASHBOARD ---
+    // --- CORREÇÃO DEFINITIVA DO ERRO 400 NO DASHBOARD ---
     @GetMapping("/my-subscription")
-    public ResponseEntity<?> getSubscription(@AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) {
-            // Retorna um objeto padrão "inativo" ou vazio, mas com status 200 OK
-            return ResponseEntity.ok(Map.of(
-                "status", "NO_TENANT",
-                "expirationDate", "",
-                "plan", "Nenhum"
+    public ResponseEntity<MySubscriptionResponse> getMySubscription(@AuthenticationPrincipal User user) {
+        UUID tenantId = resolveTenantId(user);
+
+        if (tenantId == null) {
+            return ResponseEntity.ok(new MySubscriptionResponse(
+                    false,
+                    "NO_TENANT",
+                    "Nenhum condomínio associado",
+                    null
             ));
         }
-        Tenant t = user.getTenant();
-        return ResponseEntity.ok(Map.of(
-            "status", t.getStatusAssinatura() != null ? t.getStatusAssinatura() : "ACTIVE",
-            "expirationDate", t.getDataExpiracaoPlano() != null ? t.getDataExpiracaoPlano().toString() : LocalDate.now().plusDays(30).toString(),
-            "plan", t.getPlano() != null ? t.getPlano().getNome() : "Básico"
-        ));
+
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
+
+        MySubscriptionResponse response = new MySubscriptionResponse(
+                tenant.isSubscriptionActive(),
+                tenant.getStatusAssinatura() != null ? tenant.getStatusAssinatura() : "PENDING",
+                tenant.getPlano() != null ? tenant.getPlano().getNome() : "Básico",
+                tenant.getDataExpiracaoPlano() != null ? tenant.getDataExpiracaoPlano().toString() : null
+        );
+
+        return ResponseEntity.ok(response);
     }
 
-    // --- NOVO: DELETE (SOFT DELETE) ---
+    // --- DELETE (SOFT) ---
     @DeleteMapping("/{id}")
-    public ResponseEntity<?> deleteTenant(@PathVariable UUID id, @AuthenticationPrincipal User user) {
+    public ResponseEntity<Void> deleteTenant(@PathVariable UUID id, @AuthenticationPrincipal User user) {
         if (user.getRole() != Role.ADMIN) {
-            return ResponseEntity.status(403).body("Acesso negado.");
+            return ResponseEntity.status(403).build();
         }
-        
+
         Tenant tenant = tenantRepository.findById(id).orElse(null);
-        if (tenant == null) return ResponseEntity.notFound().build();
-        
-        tenant.setAtivo(false); // SOFT DELETE
+        if (tenant == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        tenant.setAtivo(false);
         tenantRepository.save(tenant);
-        
+
+        // Log de auditoria
         AuditLog log = new AuditLog();
         log.setAction("EXCLUIR_CONDOMINIO");
-        log.setDetails("Soft delete via API em " + tenant.getNome());
+        log.setDetails("Soft delete do condomínio: " + tenant.getNome());
         log.setUserId(user.getId().toString());
         log.setUserName(user.getNome());
-        log.setResourceType("ADMIN_PANEL");
+        log.setResourceType("TENANT");
         log.setTimestamp(LocalDateTime.now().toString());
         auditLogRepository.save(log);
 
         return ResponseEntity.ok().build();
     }
 
-    // --- ENDPOINT DE AUDITORIA ---
+    // --- AUDIT LOGS ---
     @GetMapping("/audit-logs")
     public ResponseEntity<List<AuditLogResponse>> getAuditLogs(@AuthenticationPrincipal User user) {
+        UUID tenantId = resolveTenantId(user);
         List<AuditLog> logs;
 
-        if (user.getTenant() != null) {
-            logs = auditLogRepository.findByTenantIdOrderByCreatedAtDesc(user.getTenant().getId());
+        if (tenantId != null && hasManagerRole(user)) {
+            logs = auditLogRepository.findByTenantIdOrderByCreatedAtDesc(tenantId);
         } else if (user.getRole() == Role.ADMIN) {
             logs = auditLogRepository.findAllByOrderByCreatedAtDesc();
         } else {
-            return ResponseEntity.ok(List.of());
+            logs = List.of();
         }
 
         List<AuditLogResponse> response = logs.stream()
-            .map(log -> new AuditLogResponse(
-                log.getId(),
-                log.getAction(),
-                log.getUserName(),
-                log.getUserId(), 
-                log.getDetails(),
-                log.getTimestamp(),
-                log.getResourceType(),
-                log.getIpAddress()
-            ))
-            .collect(Collectors.toList());
+                .map(log -> new AuditLogResponse(
+                        log.getId(),
+                        log.getAction(),
+                        log.getUserName(),
+                        log.getUserId(),
+                        log.getDetails(),
+                        log.getTimestamp(),
+                        log.getResourceType(),
+                        log.getIpAddress()
+                ))
+                .collect(Collectors.toList());
 
         return ResponseEntity.ok(response);
     }
 
+    // --- UPDATE SECRET KEYWORD ---
     @PatchMapping("/secret-keyword")
     public ResponseEntity<String> updateSecretKeyword(@RequestBody Map<String, String> payload, Principal principal) {
-        User user = userRepository.findByEmail(principal.getName()).orElseThrow();
-        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN && user.getRole() != Role.ADM_CONDO) return ResponseEntity.status(403).build();
+        User user = userRepository.findByEmail(principal.getName())
+                .orElseThrow(() -> new RuntimeException("Usuário não encontrado"));
 
-        Tenant tenant = user.getTenant();
-        if (tenant == null) return ResponseEntity.badRequest().body("Sem condomínio.");
+        if (!hasManagerRole(user)) {
+            return ResponseEntity.status(403).body("Acesso negado.");
+        }
+
+        UUID tenantId = resolveTenantId(user);
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().body("Sem condomínio associado.");
+        }
 
         String newKeyword = payload.get("secretKeyword");
-        if (newKeyword == null || newKeyword.length() < 4) return ResponseEntity.badRequest().body("Mínimo 4 caracteres.");
+        if (newKeyword == null || newKeyword.length() < 4) {
+            return ResponseEntity.badRequest().body("A palavra-chave deve ter no mínimo 4 caracteres.");
+        }
+
+        Tenant tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new RuntimeException("Condomínio não encontrado"));
 
         tenant.setSecretKeyword(newKeyword);
         tenantRepository.save(tenant);
-        return ResponseEntity.ok("Palavra-chave atualizada.");
+
+        return ResponseEntity.ok("Palavra-chave atualizada com sucesso.");
     }
 
+    // Métodos auxiliares reutilizáveis
+    private UUID resolveTenantId(User user) {
+        UUID tenantId = TenantContext.getCurrentTenant();
+        if (tenantId != null) {
+            return tenantId;
+        }
+        return user.getTenant() != null ? user.getTenant().getId() : null;
+    }
+
+    private boolean hasManagerRole(User user) {
+        return user.getRole() == Role.SINDICO ||
+               user.getRole() == Role.ADMIN ||
+               user.getRole() == Role.ADM_CONDO;
+    }
+
+    // Records (mantidos iguais, mas com nomes mais claros)
     public record TenantDTO(UUID id, String nome) {}
     public record BankInfoDTO(String bankName, String agency, String account, String pixKey, String asaasWalletId) {}
-    
     public record AuditLogResponse(
-        UUID id, 
-        String action, 
-        String userName, 
-        String userId, 
-        String details, 
-        String timestamp, 
-        String resourceType, 
-        String ipAddress
+            UUID id,
+            String action,
+            String userName,
+            String userId,
+            String details,
+            String timestamp,
+            String resourceType,
+            String ipAddress
+    ) {}
+
+    // Resposta padronizada para subscription (evita quebras no frontend)
+    public record MySubscriptionResponse(
+            boolean active,
+            String status,
+            String plan,
+            String expirationDate  // ISO string ou null
     ) {}
 }

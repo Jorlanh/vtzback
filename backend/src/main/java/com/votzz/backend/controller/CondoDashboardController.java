@@ -20,7 +20,7 @@ public class CondoDashboardController {
 
     @GetMapping("/stats")
     public ResponseEntity<AdminDashboardStats> getStats(@AuthenticationPrincipal User currentUser) {
-        UUID tenantId = TenantContext.getTenant();
+        UUID tenantId = TenantContext.getCurrentTenant();
         if (tenantId == null && currentUser != null && currentUser.getTenant() != null) {
             tenantId = currentUser.getTenant().getId();
         }
