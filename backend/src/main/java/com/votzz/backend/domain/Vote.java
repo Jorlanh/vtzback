@@ -35,7 +35,8 @@ public class Vote extends BaseEntity {
     @Column(name = "option_id", nullable = false) 
     private String optionId; 
 
-    @Column(name = "unidade") // REGISTRA A UNIDADE ESPECÍFICA (EX: Bloco A 202)
+    // --- CAMPO NECESSÁRIO PARA O MULTI-VOTO ---
+    @Column(name = "unidade") // EX: "Bloco A unidade 202"
     private String unidade;
 
     @Column(name = "hash") 

@@ -7,7 +7,7 @@ import java.util.UUID;
 
 @Data
 @Entity
-@Table(name = "poll_votes") // Nome exato da tabela no SQL
+@Table(name = "poll_votes")
 public class PollVote {
 
     @Id
@@ -20,10 +20,13 @@ public class PollVote {
     @Column(name = "option_id")
     private UUID optionId;
 
+    // --- CAMPO NECESSÁRIO ---
+    @Column(name = "unit") 
+    private String unit; 
+
     @Column(name = "voted_at")
     private LocalDateTime votedAt;
     
-    // O SQL tem created_at/updated_at, é bom ter aqui
     @Column(name = "created_at")
     private LocalDateTime createdAt;
 

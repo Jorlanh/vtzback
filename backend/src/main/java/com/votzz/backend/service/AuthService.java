@@ -15,6 +15,7 @@ import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.stream.Collectors;
 
 @Service
 @RequiredArgsConstructor
@@ -79,13 +80,44 @@ public class AuthService {
             user.setTenant(tenants.get(0));
         }
 
+        // --- NOVA LÓGICA: BUSCAR TODAS AS UNIDADES DESTE MORADOR NESTE CONDOMÍNIO ---
+        // Isso resolve o problema de não aparecerem as opções no modal
+        List<String> unidadesDoMorador = new ArrayList<>();
+        
+        if (user.getTenant() != null && user.getCpf() != null) {
+            // Busca usuários com mesmo CPF e mesmo Tenant ID
+            List<User> multiUnits = userRepository.findAll().stream()
+                .filter(u -> u.getCpf() != null && u.getCpf().equals(user.getCpf()))
+                .filter(u -> u.getTenant() != null && u.getTenant().getId().equals(user.getTenant().getId()))
+                .toList();
+
+            // Formata a string como o Frontend espera (ex: "Bloco A unidade 202")
+            unidadesDoMorador = multiUnits.stream()
+                .map(u -> {
+                    String label = "";
+                    if (u.getBloco() != null && !u.getBloco().isEmpty()) label += u.getBloco() + " ";
+                    if (u.getUnidade() != null) label += "unidade " + u.getUnidade();
+                    return label.trim();
+                })
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        }
+        
+        // Fallback: se a lista ficou vazia, adiciona ao menos a unidade do login atual
+        if (unidadesDoMorador.isEmpty()) {
+            String label = "";
+            if (user.getBloco() != null) label += user.getBloco() + " ";
+            if (user.getUnidade() != null) label += "unidade " + user.getUnidade();
+            if (!label.isBlank()) unidadesDoMorador.add(label.trim());
+        }
+
         // 6. Gera o Token
         String token = tokenService.generateToken(user, dto.keepLogged());
         
         user.setLastSeen(LocalDateTime.now());
         userRepository.save(user);
 
-        // 7. Retorna Sucesso - CORRIGIDO PARA BATER COM O CONSTRUTOR DO DTO
+        // 7. Retorna Sucesso com a lista preenchida
         return new LoginResponse(
             token, 
             "Bearer", 
@@ -95,9 +127,10 @@ public class AuthService {
             user.getRole().name(), 
             user.getTenant() != null ? user.getTenant().getId().toString() : null,
             user.getTenant() != null ? user.getTenant().getNome() : "Sem Condomínio",
-            user.getBloco(),   // <-- Adicionado
-            user.getUnidade(), // <-- Adicionado
-            user.getCpf(),     // <-- Adicionado
+            user.getBloco(),   
+            user.getUnidade(), 
+            user.getCpf(),     
+            unidadesDoMorador, // <--- LISTA PASSADA AQUI
             false, 
             false, 
             null 

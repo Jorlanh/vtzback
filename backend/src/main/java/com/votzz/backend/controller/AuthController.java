@@ -111,8 +111,11 @@ public class AuthController {
             if (!isDeviceTrusted) {
                 // Se não enviou o código, pede o código
                 if (request.code2fa() == null) {
+                      // CORREÇÃO AQUI: Passando null na lista de unidades para o step de 2FA
                       return ResponseEntity.ok(new LoginResponse(
-                        null, null, null, null, null, null, null, null, null, null, null, true, false, null
+                        null, null, null, null, null, null, null, null, null, null, null, 
+                        null, // unidadesList
+                        true, false, null
                     ));
                 }
                 // Valida o código
@@ -205,12 +208,42 @@ public class AuthController {
 
         String token = tokenService.generateToken(selectedUser, request.keepLogged());
 
+        // --- LÓGICA DE UNIDADES (CORREÇÃO) ---
+        List<String> unidadesDoMorador = new ArrayList<>();
+        if (selectedUser.getTenant() != null && selectedUser.getCpf() != null) {
+            // Busca outras unidades do mesmo morador neste condomínio
+            User finalUser = selectedUser;
+            List<User> multiUnits = userRepository.findAll().stream()
+                .filter(u -> u.getCpf() != null && u.getCpf().equals(finalUser.getCpf()))
+                .filter(u -> u.getTenant() != null && u.getTenant().getId().equals(finalUser.getTenant().getId()))
+                .toList();
+
+            unidadesDoMorador = multiUnits.stream()
+                .map(u -> {
+                    String label = "";
+                    if (u.getBloco() != null && !u.getBloco().isEmpty()) label += u.getBloco() + " ";
+                    if (u.getUnidade() != null) label += "unidade " + u.getUnidade();
+                    return label.trim();
+                })
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        }
+        // Fallback
+        if (unidadesDoMorador.isEmpty()) {
+            String label = "";
+            if (selectedUser.getBloco() != null) label += selectedUser.getBloco() + " ";
+            if (selectedUser.getUnidade() != null) label += "unidade " + selectedUser.getUnidade();
+            if(!label.isBlank()) unidadesDoMorador.add(label.trim());
+        }
+
+        // CORREÇÃO: Passando unidadesList para o construtor
         return ResponseEntity.ok(new LoginResponse(
             token, "Bearer", selectedUser.getId().toString(), selectedUser.getNome(), selectedUser.getEmail(),
             selectedUser.getRole().name(), 
             selectedUser.getTenant() != null ? selectedUser.getTenant().getId().toString() : null,
             selectedUser.getTenant() != null ? selectedUser.getTenant().getNome() : "Sem Condomínio",
             selectedUser.getBloco(), selectedUser.getUnidade(), selectedUser.getCpf(),
+            unidadesDoMorador, // <-- Campo novo
             false, false, null
         ));
     }
@@ -241,12 +274,41 @@ public class AuthController {
 
         String token = tokenService.generateToken(user);
         
+        // --- LÓGICA DE UNIDADES (CORREÇÃO) ---
+        List<String> unidadesDoMorador = new ArrayList<>();
+        if (user.getTenant() != null && user.getCpf() != null) {
+            User finalUser = user;
+            List<User> multiUnits = userRepository.findAll().stream()
+                .filter(u -> u.getCpf() != null && u.getCpf().equals(finalUser.getCpf()))
+                .filter(u -> u.getTenant() != null && u.getTenant().getId().equals(finalUser.getTenant().getId()))
+                .toList();
+
+            unidadesDoMorador = multiUnits.stream()
+                .map(u -> {
+                    String label = "";
+                    if (u.getBloco() != null && !u.getBloco().isEmpty()) label += u.getBloco() + " ";
+                    if (u.getUnidade() != null) label += "unidade " + u.getUnidade();
+                    return label.trim();
+                })
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        }
+        // Fallback
+        if (unidadesDoMorador.isEmpty()) {
+            String label = "";
+            if (user.getBloco() != null) label += user.getBloco() + " ";
+            if (user.getUnidade() != null) label += "unidade " + user.getUnidade();
+            if(!label.isBlank()) unidadesDoMorador.add(label.trim());
+        }
+
+        // CORREÇÃO: Passando unidadesList para o construtor
         return ResponseEntity.ok(new LoginResponse(
             token, "Bearer", user.getId().toString(), user.getNome(), user.getEmail(),
             user.getRole().name(), 
             user.getTenant() != null ? user.getTenant().getId().toString() : null,
             user.getTenant() != null ? user.getTenant().getNome() : null,
             user.getBloco(), user.getUnidade(), user.getCpf(),
+            unidadesDoMorador, // <-- Campo novo
             false, false, null
         ));
     }

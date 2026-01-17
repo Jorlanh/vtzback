@@ -94,7 +94,7 @@ public class AdminController {
 
         String token = tokenService.generateToken(tempUser);
 
-        // CORREÇÃO: Construtor atualizado para 14 argumentos
+        // CORREÇÃO: Construtor atualizado, passando null para unidadesList
         return ResponseEntity.ok(new LoginResponse(
             token, 
             "Bearer", 
@@ -107,6 +107,7 @@ public class AdminController {
             null, // bloco
             null, // unidade
             null, // cpf
+            null, // unidadesList (CORREÇÃO)
             false, // requiresTwoFactor
             false, // is2faSetup
             null  // profiles

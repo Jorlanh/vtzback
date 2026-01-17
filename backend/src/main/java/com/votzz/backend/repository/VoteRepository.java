@@ -9,12 +9,14 @@ import java.util.UUID;
 
 @Repository
 public interface VoteRepository extends JpaRepository<Vote, UUID> {
+    // MÉTODO ANTIGO (Pode manter para retrocompatibilidade)
     boolean existsByAssemblyIdAndUserId(UUID assemblyId, UUID userId);
 
-    // FIX para o ReportService
-    List<Vote> findByAssemblyId(UUID assemblyId);
+    // --- NOVO MÉTODO CRÍTICO ---
+    // Verifica se uma unidade específica (texto) já votou nesta assembleia
+    boolean existsByAssemblyIdAndUnidade(UUID assemblyId, String unidade);
 
-    // FIX para o CondoDashboardService
+    List<Vote> findByAssemblyId(UUID assemblyId);
     long countByTenantId(UUID tenantId);
     long countByTenantIdAndCreatedAtAfter(UUID tenantId, LocalDateTime startDate);
 }

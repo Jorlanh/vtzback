@@ -13,6 +13,8 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.web.bind.annotation.*;
 
 import java.io.ByteArrayInputStream;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
@@ -39,14 +41,13 @@ public class GovernanceController {
     }
 
     // --- DOWNLOAD DO PDF CORRIGIDO ---
-    // Removemos o try-catch de IOException pois ByteArrayInputStream não lança esse erro
     @GetMapping("/polls/{id}/report")
     public ResponseEntity<byte[]> downloadPollReport(@PathVariable UUID id) {
         
         // 1. Gera o Stream do PDF
         ByteArrayInputStream pdfStream = pollReportService.generatePollPdf(id);
         
-        // 2. Converte para array de bytes (Nativo do Java, não precisa de lib extra)
+        // 2. Converte para array de bytes
         byte[] bytes = pdfStream.readAllBytes(); 
 
         // 3. Pega nome do arquivo
@@ -68,7 +69,27 @@ public class GovernanceController {
         return ResponseEntity.ok().build();
     }
 
-    // --- OUTROS ENDPOINTS (MANTIDOS IGUAIS) ---
+    // --- VOTAÇÃO EM ENQUETE (ATUALIZADO PARA MULTI-UNIDADE) ---
+    @PostMapping("/polls/{id}/vote")
+    public ResponseEntity<?> votePoll(@PathVariable UUID id, @RequestBody Map<String, Object> payload) {
+        User user = getFreshUser();
+        UUID optionId = UUID.fromString((String) payload.get("optionId"));
+        
+        // Extrai a lista de unidades do payload com segurança
+        List<String> units = new ArrayList<>();
+        if (payload.containsKey("units") && payload.get("units") instanceof List) {
+            List<?> rawList = (List<?>) payload.get("units");
+            for(Object o : rawList) {
+                if (o != null) units.add(o.toString());
+            }
+        }
+
+        // Chama o serviço passando a lista
+        governanceService.votePoll(id, user, optionId, units);
+        return ResponseEntity.ok().build();
+    }
+
+    // --- OUTROS ENDPOINTS ---
     
     @PostMapping("/announcements")
     public ResponseEntity<?> createAnnouncement(@RequestBody Announcement ann) {
@@ -102,13 +123,7 @@ public class GovernanceController {
         governanceService.deletePoll(id, getFreshUser());
         return ResponseEntity.ok().build();
     }
-    @PostMapping("/polls/{id}/vote")
-    public ResponseEntity<?> votePoll(@PathVariable UUID id, @RequestBody Map<String, String> payload) {
-        User user = getFreshUser();
-        UUID optionId = UUID.fromString(payload.get("optionId"));
-        governanceService.votePoll(id, user, optionId);
-        return ResponseEntity.ok().build();
-    }
+    
     @PostMapping("/events")
     public ResponseEntity<?> createCalendarEvent(@RequestBody CalendarEvent evt) {
         governanceService.createCalendarEvent(evt, getFreshUser());

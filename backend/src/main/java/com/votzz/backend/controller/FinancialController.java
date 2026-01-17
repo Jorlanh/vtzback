@@ -11,6 +11,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -28,20 +29,38 @@ public class FinancialController {
     private final FinancialReportRepository reportRepository;
     private final FileStorageService fileStorageService;
 
-    // --- SALDO ---
+    // --- SALDO (CORRIGIDO VAZAMENTO) ---
     @GetMapping("/balance")
     public ResponseEntity<CondoFinancial> getBalance(@AuthenticationPrincipal User user) {
-        if(user.getTenant() == null) return ResponseEntity.ok(new CondoFinancial());
-        // Busca saldo vinculado ao tenant (ou o último global se não tiver filtro ainda)
-        return ResponseEntity.ok(financialRepository.findFirstByOrderByLastUpdateDesc());
+        if(user.getTenant() == null) {
+            // Retorna objeto vazio se não tiver tenant, mas com 200 OK
+            return ResponseEntity.ok(new CondoFinancial());
+        }
+        
+        // CORREÇÃO CRÍTICA: Busca APENAS pelo ID do Tenant do usuário logado
+        return financialRepository.findByTenantId(user.getTenant().getId())
+                .map(ResponseEntity::ok)
+                .orElse(ResponseEntity.ok(new CondoFinancial())); // Retorna vazio se ainda não tiver registro, mas não vaza o global
     }
 
     @PostMapping("/update")
+    @Transactional
     public ResponseEntity<CondoFinancial> updateBalance(@RequestBody Map<String, BigDecimal> payload, @AuthenticationPrincipal User user) {
-        CondoFinancial fin = new CondoFinancial();
+        if (user.getTenant() == null) return ResponseEntity.status(403).build();
+
+        // Busca o registro existente do tenant OU cria um novo vinculado a ele
+        CondoFinancial fin = financialRepository.findByTenantId(user.getTenant().getId())
+                .orElse(new CondoFinancial());
+        
+        // Garante o vínculo correto com o Tenant
+        if (fin.getTenant() == null) {
+            fin.setTenant(user.getTenant());
+        }
+
         fin.setBalance(payload.get("balance"));
         fin.setLastUpdate(LocalDateTime.now());
         fin.setUpdatedBy(user.getNome());
+        
         return ResponseEntity.ok(financialRepository.save(fin));
     }
 
@@ -51,9 +70,9 @@ public class FinancialController {
     public ResponseEntity<List<ReportDTO>> listReports(@AuthenticationPrincipal User user) {
         if (user.getTenant() == null) return ResponseEntity.ok(List.of());
 
+        // Garante filtro por Tenant ID
         List<FinancialReport> reports = reportRepository.findByTenantIdOrderByYearDescCreatedAtDesc(user.getTenant().getId());
         
-        // Limita aos últimos 12 (opcional, mas boa prática)
         List<ReportDTO> dtos = reports.stream()
             .limit(12)
             .map(r -> new ReportDTO(r.getId().toString(), r.getMonth(), r.getYear(), r.getFileName(), r.getUrl()))
@@ -72,12 +91,10 @@ public class FinancialController {
         if (user.getTenant() == null) return ResponseEntity.badRequest().body("Usuário sem condomínio.");
 
         try {
-            // CORREÇÃO AQUI: Chama o método 'uploadFile' do serviço S3 (não mais 'storeFile')
             String fileUrl = fileStorageService.uploadFile(file); 
 
-            // 2. Salva no banco
             FinancialReport report = new FinancialReport();
-            report.setTenant(user.getTenant());
+            report.setTenant(user.getTenant()); // Vincula ao tenant correto
             report.setMonth(month);
             report.setYear(year);
             report.setFileName(file.getOriginalFilename());

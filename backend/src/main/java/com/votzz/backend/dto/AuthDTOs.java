@@ -35,6 +35,9 @@ public class AuthDTOs {
         public String unidade;
         public String cpf;
         
+        // --- NOVO CAMPO: Lista de unidades para o Frontend exibir o modal ---
+        public List<String> unidadesList; 
+
         public boolean multipleProfiles;
         public boolean requiresTwoFactor;
         public boolean is2faSetup; // Para o primeiro acesso
@@ -45,6 +48,7 @@ public class AuthDTOs {
         public LoginResponse(String token, String type, String id, String nome, String email, 
                              String role, String tenantId, String tenantName, 
                              String bloco, String unidade, String cpf,
+                             List<String> unidadesList, // <--- Recebe a lista aqui
                              boolean requiresTwoFactor, boolean is2faSetup,
                              List<ProfileOption> profiles) {
             this.token = token;
@@ -58,6 +62,7 @@ public class AuthDTOs {
             this.bloco = bloco;
             this.unidade = unidade;
             this.cpf = cpf;
+            this.unidadesList = unidadesList; // <--- Atribui a lista
             this.requiresTwoFactor = requiresTwoFactor;
             this.is2faSetup = is2faSetup;
             this.profiles = profiles;

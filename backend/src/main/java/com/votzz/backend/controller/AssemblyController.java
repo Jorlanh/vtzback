@@ -1,7 +1,7 @@
 package com.votzz.backend.controller;
 
 import com.votzz.backend.domain.Assembly;
-import com.votzz.backend.domain.Tenant; // Importante para criar a referência
+import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.Vote;
 import com.votzz.backend.repository.AssemblyRepository;
@@ -78,7 +78,6 @@ public class AssemblyController {
         try {
             if (currentUser == null) return ResponseEntity.status(401).body("Usuário não autenticado.");
 
-            // 1. Identifica o Tenant correto (Prioridade: Header > Usuário)
             UUID tenantId = TenantContext.getTenant();
             if (tenantId == null && currentUser.getTenant() != null) {
                 tenantId = currentUser.getTenant().getId();
@@ -88,15 +87,11 @@ public class AssemblyController {
                 return ResponseEntity.badRequest().body("Não foi possível identificar o condomínio.");
             }
 
-            // CORREÇÃO CRÍTICA AQUI:
-            // Em vez de usar currentUser.getTenant(), criamos uma referência ao Tenant do contexto atual.
-            // Isso permite que um síndico crie assembleias para o condominio B enquanto logado no painel B.
             Tenant targetTenant = new Tenant();
             targetTenant.setId(tenantId);
             
             assembly.setTenant(targetTenant);
 
-            // Garante que as opções de voto fiquem vinculadas ao mesmo tenant da assembleia
             if (assembly.getOptions() != null) {
                 assembly.getOptions().forEach(option -> {
                     option.setTenant(targetTenant);
@@ -104,25 +99,19 @@ public class AssemblyController {
                 });
             }
 
-            // Gera link Jitsi se não houver link de vídeo
             if (assembly.getLinkVideoConferencia() == null || assembly.getLinkVideoConferencia().isEmpty()) {
                 if (assembly.getYoutubeLiveUrl() == null || assembly.getYoutubeLiveUrl().isEmpty()) {
                     assembly.setLinkVideoConferencia("https://meet.jit.si/votzz-" + UUID.randomUUID().toString().substring(0, 8));
                 }
             }
 
-            // Define padrões se nulo
             if (assembly.getStatus() == null) assembly.setStatus("AGENDADA");
             if (assembly.getDataInicio() == null) assembly.setDataInicio(LocalDateTime.now());
             if (assembly.getDataFim() == null) assembly.setDataFim(LocalDateTime.now().plusDays(2));
 
-            // Salva a assembleia
             Assembly saved = assemblyRepository.save(assembly);
-            
-            // Log de auditoria usando o tenant correto
             auditService.log(currentUser, targetTenant, "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
 
-            // Envio de notificações
             try {
                 List<User> residents = userRepository.findByTenantId(tenantId);
                 List<String> emails = residents.stream()
@@ -134,7 +123,6 @@ public class AssemblyController {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
                     String dataFormatada = saved.getDataInicio().format(formatter);
                     emailService.sendNewAssemblyNotification(emails, saved.getTitulo(), dataFormatada);
-                    logger.info("Notificação de nova assembleia enviada para {} e-mails no tenant {}", emails.size(), tenantId);
                 }
             } catch (Exception e) {
                 logger.error("Falha ao processar notificações por e-mail: {}", e.getMessage());
@@ -154,34 +142,65 @@ public class AssemblyController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
+    // --- ENDPOINT DE VOTO ATUALIZADO ---
     @PostMapping("/{id}/vote")
     @Transactional
     public ResponseEntity<?> votar(@PathVariable UUID id, @RequestBody VoteRequest request, @AuthenticationPrincipal User currentUser) {
         var assemblyOpt = assemblyRepository.findById(id);
         if (assemblyOpt.isEmpty()) return ResponseEntity.notFound().build();
+        Assembly assembly = assemblyOpt.get();
 
-        UUID voterId = request.userId() != null ? request.userId() : currentUser.getId();
-        if (voteRepository.existsByAssemblyIdAndUserId(id, voterId)) {
-            return ResponseEntity.badRequest().body(Map.of("message", "Você já votou nesta assembleia."));
+        if ("ENCERRADA".equalsIgnoreCase(assembly.getStatus()) || 
+           (assembly.getDataFim() != null && LocalDateTime.now().isAfter(assembly.getDataFim()))) {
+            return ResponseEntity.badRequest().body(Map.of("message", "Votação encerrada."));
         }
 
-        Vote vote = new Vote();
-        vote.setAssembly(assemblyOpt.get());
-        User voter = userRepository.findById(voterId).orElse(currentUser);
-        vote.setUser(voter);
-        
-        if (assemblyOpt.get().getTenant() != null) {
-            vote.setTenant(assemblyOpt.get().getTenant());
+        User voter = userRepository.findById(request.userId() != null ? request.userId() : currentUser.getId())
+                .orElse(currentUser);
+
+        // --- LÓGICA MULTI-UNIDADE ---
+        // Se a lista de unidades vier nula ou vazia, usa a unidade do cadastro do usuário como fallback
+        List<String> unitsToVote = (request.units() != null && !request.units().isEmpty()) 
+                ? request.units() 
+                : List.of((voter.getBloco() != null ? voter.getBloco() + " " : "") + "unidade " + voter.getUnidade());
+
+        int votosRegistrados = 0;
+        StringBuilder receiptBuilder = new StringBuilder();
+
+        for (String unidadeNome : unitsToVote) {
+            String nomeLimpo = unidadeNome.trim();
+            // Verifica duplicidade pela String da Unidade
+            if (voteRepository.existsByAssemblyIdAndUnidade(id, nomeLimpo)) {
+                logger.warn("Unidade {} já votou na assembleia {}", nomeLimpo, id);
+                continue; // Pula essa unidade pois já votou
+            }
+
+            Vote vote = new Vote();
+            vote.setAssembly(assembly);
+            vote.setUser(voter); 
+            if (assembly.getTenant() != null) vote.setTenant(assembly.getTenant());
+            
+            vote.setOptionId(request.optionId());
+            vote.setUnidade(nomeLimpo); // Salva o nome da unidade
+            vote.setHash(UUID.randomUUID().toString()); 
+            vote.setFraction(new BigDecimal("1.0")); 
+
+            voteRepository.save(vote);
+            votosRegistrados++;
+            receiptBuilder.append(vote.getHash().substring(0, 8)).append("; ");
         }
-        
-        vote.setOptionId(request.optionId());
-        vote.setHash(UUID.randomUUID().toString()); 
-        vote.setFraction(new BigDecimal("1.0")); 
 
-        voteRepository.save(vote);
-        auditService.log(voter, assemblyOpt.get().getTenant(), "VOTO_REGISTRADO", "Voto na pauta: " + assemblyOpt.get().getTitulo(), "VOTACAO");
+        if (votosRegistrados == 0) {
+            return ResponseEntity.badRequest().body(Map.of("message", "As unidades selecionadas já votaram ou nenhuma foi selecionada."));
+        }
 
-        return ResponseEntity.ok(Map.of("id", vote.getHash(), "message", "Voto confirmado"));
+        auditService.log(voter, assembly.getTenant(), "VOTO_REGISTRADO", 
+            "Voto na pauta: " + assembly.getTitulo() + " (Unidades: " + String.join(", ", unitsToVote) + ")", "VOTACAO");
+
+        return ResponseEntity.ok(Map.of(
+            "id", receiptBuilder.toString(), 
+            "message", votosRegistrados + " voto(s) computado(s) com sucesso!"
+        ));
     }
 
     @PatchMapping("/{id}/close") 
@@ -194,5 +213,6 @@ public class AssemblyController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    public record VoteRequest(String optionId, UUID userId) {}
+    // ATUALIZADO PARA ACEITAR LISTA DE UNIDADES
+    public record VoteRequest(String optionId, UUID userId, List<String> units) {}
 }

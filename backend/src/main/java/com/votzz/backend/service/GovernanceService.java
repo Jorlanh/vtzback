@@ -15,7 +15,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.*;
-import java.util.List; // Garante que é java.util.List
+import java.util.List;
 import java.util.stream.Collectors;
 
 @Service
@@ -76,7 +76,7 @@ public class GovernanceService {
         List<Announcement> archivedAnn = new ArrayList<>();
         
         for (Announcement a : allAnnouncements) {
-            // Verifica leitura (IMPORTANTE: Apenas verifica se o ID está no Set)
+            // Verifica leitura
             boolean leu = a.getReadBy() != null && a.getReadBy().contains(user.getId());
             a.setReadByCurrentUser(leu);
 
@@ -163,8 +163,8 @@ public class GovernanceService {
         List<Poll> allP = pollRepository.findAll();
         for(Poll p : allP) {
              boolean shouldArchive = !Boolean.TRUE.equals(p.getIsArchived()) && 
-                                     ((p.getAutoArchiveDate() != null && p.getAutoArchiveDate().isBefore(now)) || 
-                                      (p.getEndDate() != null && p.getEndDate().isBefore(now)));
+                                    ((p.getAutoArchiveDate() != null && p.getAutoArchiveDate().isBefore(now)) || 
+                                     (p.getEndDate() != null && p.getEndDate().isBefore(now)));
              if(shouldArchive) {
                 p.setIsArchived(true);
                 p.setStatus("CLOSED");
@@ -262,30 +262,43 @@ public class GovernanceService {
         });
     }
 
-    // --- VOTAÇÃO & LEITURA ---
-
+    // --- VOTAÇÃO ATUALIZADA (MULTI-UNIDADE) ---
     @Transactional
-    public void votePoll(UUID pollId, User voter, UUID optionId) {
+    public void votePoll(UUID pollId, User voter, UUID optionId, List<String> units) {
         pollRepository.findById(pollId).ifPresent(poll -> {
+            // 1. Validação de Encerramento
             if ((poll.getEndDate() != null && poll.getEndDate().isBefore(LocalDateTime.now())) || "CLOSED".equals(poll.getStatus())) {
                 throw new RuntimeException("Esta enquete já está encerrada.");
             }
             if(poll.getVotes() == null) poll.setVotes(new ArrayList<>());
             
-            poll.getVotes().removeIf(v -> v.getUserId().equals(voter.getId()));
+            // 2. Define quais unidades vão votar (fallback para cadastro se vazio)
+            List<String> targetUnits = (units != null && !units.isEmpty()) 
+                ? units 
+                : List.of((voter.getBloco() != null ? voter.getBloco() + " " : "") + "unidade " + voter.getUnidade());
+
+            // 3. Remove votos ANTERIORES apenas das unidades que estão votando agora (permite corrigir voto)
+            poll.getVotes().removeIf(v -> 
+                v.getUserId().equals(voter.getId()) && targetUnits.contains(v.getUnit())
+            );
             
-            PollVote vote = new PollVote();
-            vote.setUserId(voter.getId());
-            vote.setOptionId(optionId);
-            poll.getVotes().add(vote);
+            // 4. Adiciona novos votos
+            for (String unitName : targetUnits) {
+                String cleanName = unitName.trim();
+                PollVote vote = new PollVote();
+                vote.setUserId(voter.getId());
+                vote.setOptionId(optionId);
+                vote.setUnit(cleanName); // Seta a unidade específica no PollVote (Campo novo)
+                poll.getVotes().add(vote);
+            }
+
             pollRepository.save(poll);
             
-            logAction(voter, "VOTAR_ENQUETE", "Votou na enquete: " + poll.getTitle());
+            logAction(voter, "VOTAR_ENQUETE", "Votou na enquete: " + poll.getTitle() + " (" + targetUnits.size() + " unid)");
         });
     }
 
-    // === CORREÇÃO DA LEITURA DE COMUNICADO ===
-    // Garante que só adiciona se não existir, e SALVA no banco.
+    // --- LEITURA DE COMUNICADO ---
     @Transactional
     public void markAnnouncementAsRead(UUID annId, UUID userId) {
         Announcement ann = announcementRepository.findById(annId)
@@ -302,7 +315,7 @@ public class GovernanceService {
         }
     }
 
-    // === CORREÇÃO DA GERAÇÃO DE PDF (PDF REAL) ===
+    // --- GERAÇÃO DE PDF (PDF REAL) ---
     public ByteArrayInputStream generatePollReportPdf(UUID pollId, User requester) {
         Poll poll = pollRepository.findById(pollId).orElseThrow();
         

@@ -9,7 +9,6 @@ import com.votzz.backend.repository.TenantRepository;
 import com.votzz.backend.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
@@ -42,7 +41,7 @@ public class TenantController {
     // --- SALVAR DADOS BANCÁRIOS ---
     @PostMapping("/bank-info")
     public ResponseEntity<?> saveBankInfo(@RequestBody BankInfoDTO dto, @AuthenticationPrincipal User user) {
-        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN) {
+        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN && user.getRole() != Role.ADM_CONDO) {
             return ResponseEntity.status(403).body("Apenas síndicos podem configurar dados bancários.");
         }
 
@@ -65,21 +64,32 @@ public class TenantController {
     // --- OBTER DADOS BANCÁRIOS ---
     @GetMapping("/bank-info")
     public ResponseEntity<BankInfoDTO> getBankInfo(@AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) return ResponseEntity.notFound().build();
+        if (user.getTenant() == null) {
+            // Retorna vazio em vez de erro para não quebrar o frontend
+            return ResponseEntity.ok(new BankInfoDTO("", "", "", "", ""));
+        }
         
         Tenant t = user.getTenant();
         return ResponseEntity.ok(new BankInfoDTO(
-            t.getBanco(),
-            t.getAgencia(),
-            t.getConta(),
-            t.getChavePix(),
-            t.getAsaasWalletId()
+            t.getBanco() != null ? t.getBanco() : "",
+            t.getAgencia() != null ? t.getAgencia() : "",
+            t.getConta() != null ? t.getConta() : "",
+            t.getChavePix() != null ? t.getChavePix() : "",
+            t.getAsaasWalletId() != null ? t.getAsaasWalletId() : ""
         ));
     }
 
+    // --- CORREÇÃO DO ERRO 400 NO DASHBOARD ---
     @GetMapping("/my-subscription")
     public ResponseEntity<?> getSubscription(@AuthenticationPrincipal User user) {
-        if (user.getTenant() == null) return ResponseEntity.notFound().build();
+        if (user.getTenant() == null) {
+            // Retorna um objeto padrão "inativo" ou vazio, mas com status 200 OK
+            return ResponseEntity.ok(Map.of(
+                "status", "NO_TENANT",
+                "expirationDate", "",
+                "plan", "Nenhum"
+            ));
+        }
         Tenant t = user.getTenant();
         return ResponseEntity.ok(Map.of(
             "status", t.getStatusAssinatura() != null ? t.getStatusAssinatura() : "ACTIVE",
@@ -89,7 +99,6 @@ public class TenantController {
     }
 
     // --- NOVO: DELETE (SOFT DELETE) ---
-    // Apenas Admins devem poder apagar/desativar condomínios
     @DeleteMapping("/{id}")
     public ResponseEntity<?> deleteTenant(@PathVariable UUID id, @AuthenticationPrincipal User user) {
         if (user.getRole() != Role.ADMIN) {
@@ -102,7 +111,6 @@ public class TenantController {
         tenant.setAtivo(false); // SOFT DELETE
         tenantRepository.save(tenant);
         
-        // Log simples
         AuditLog log = new AuditLog();
         log.setAction("EXCLUIR_CONDOMINIO");
         log.setDetails("Soft delete via API em " + tenant.getNome());
@@ -115,31 +123,25 @@ public class TenantController {
         return ResponseEntity.ok().build();
     }
 
-    // --- ENDPOINT DE AUDITORIA (CORRIGIDO E BLINDADO) ---
+    // --- ENDPOINT DE AUDITORIA ---
     @GetMapping("/audit-logs")
     public ResponseEntity<List<AuditLogResponse>> getAuditLogs(@AuthenticationPrincipal User user) {
         List<AuditLog> logs;
 
-        // 1. Lógica de decisão: Quem pode ver o quê?
         if (user.getTenant() != null) {
-            // Se tem condomínio, vê apenas os dele
             logs = auditLogRepository.findByTenantIdOrderByCreatedAtDesc(user.getTenant().getId());
         } else if (user.getRole() == Role.ADMIN) {
-            // Se é Admin Geral (sem condomínio), vê tudo
             logs = auditLogRepository.findAllByOrderByCreatedAtDesc();
         } else {
-            // Se não é nenhum dos dois, retorna lista vazia (evita erro 400/403)
             return ResponseEntity.ok(List.of());
         }
 
-        // 2. CONVERSÃO MANUAL (DTO):
-        // Isto extrai apenas os dados seguros e ignora o objeto "Tenant" problemático.
         List<AuditLogResponse> response = logs.stream()
             .map(log -> new AuditLogResponse(
                 log.getId(),
                 log.getAction(),
-                log.getUserName(),  // Nome do utilizador
-                log.getUserId(),    // ID do utilizador
+                log.getUserName(),
+                log.getUserId(), 
                 log.getDetails(),
                 log.getTimestamp(),
                 log.getResourceType(),
@@ -153,7 +155,7 @@ public class TenantController {
     @PatchMapping("/secret-keyword")
     public ResponseEntity<String> updateSecretKeyword(@RequestBody Map<String, String> payload, Principal principal) {
         User user = userRepository.findByEmail(principal.getName()).orElseThrow();
-        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN) return ResponseEntity.status(403).build();
+        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADMIN && user.getRole() != Role.ADM_CONDO) return ResponseEntity.status(403).build();
 
         Tenant tenant = user.getTenant();
         if (tenant == null) return ResponseEntity.badRequest().body("Sem condomínio.");
@@ -166,11 +168,9 @@ public class TenantController {
         return ResponseEntity.ok("Palavra-chave atualizada.");
     }
 
-    // --- DTOs (Objetos de Transferência de Dados) ---
     public record TenantDTO(UUID id, String nome) {}
     public record BankInfoDTO(String bankName, String agency, String account, String pixKey, String asaasWalletId) {}
     
-    // Este DTO é a chave para resolver o problema de serialização
     public record AuditLogResponse(
         UUID id, 
         String action, 
