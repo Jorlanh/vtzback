@@ -42,12 +42,14 @@ public class AuthService {
     private String linkBusinessAnual;
 
     public LoginResponse login(LoginRequest dto) {
+        // 1. Busca todos os usuários que batem com o login (E-mail ou CPF)
         List<User> candidates = userRepository.findAllByEmailOrCpf(dto.login(), dto.login());
 
         if (candidates.isEmpty()) {
             throw new RuntimeException("Usuário ou senha inválidos.");
         }
 
+        // 2. Filtra apenas os usuários onde a senha bate
         List<User> validUsers = candidates.stream()
                 .filter(u -> passwordEncoder.matches(dto.password(), u.getPassword()))
                 .collect(Collectors.toList());
@@ -56,38 +58,74 @@ public class AuthService {
             throw new RuntimeException("Usuário ou senha inválidos.");
         }
 
-        User user = validUsers.get(0); 
+        // --- LÓGICA DO LEQUE (Múltiplas Contas/Perfis) ---
         
-        // Lógica do Leque
-        if (validUsers.size() > 1 || (user.getTenants() != null && user.getTenants().size() > 1)) {
-            if (dto.selectedProfileId() == null || dto.selectedProfileId().isBlank()) {
-                List<ProfileOption> profiles = new ArrayList<>();
-                for (User u : validUsers) {
-                    if (u.getTenants().isEmpty()) {
-                         profiles.add(new ProfileOption(u.getId().toString(), u.getRole().name(), "Perfil Global", u.getNome()));
-                    } else {
-                        for (Tenant t : u.getTenants()) {
-                            profiles.add(new ProfileOption(t.getId().toString(), u.getRole().name(), t.getNome(), u.getNome()));
-                        }
-                    }
+        boolean needsProfileSelection = dto.selectedProfileId() == null || dto.selectedProfileId().isBlank();
+
+        if (needsProfileSelection) {
+            List<ProfileOption> profiles = new ArrayList<>();
+
+            for (User u : validUsers) {
+                if (u.getRole() == Role.AFILIADO) {
+                    profiles.add(new ProfileOption(
+                        u.getId().toString(), 
+                        u.getRole().name(), 
+                        "Painel de Afiliado", 
+                        u.getNome()
+                    ));
                 }
-                return new LoginResponse(true, profiles); 
+
+                if (u.getTenants() != null && !u.getTenants().isEmpty()) {
+                    for (Tenant t : u.getTenants()) {
+                        String label = t.getNome();
+                        if (u.getRole() == Role.MORADOR) {
+                            label += " - Unidade: " + (u.getUnidade() != null ? u.getUnidade() : "N/A");
+                        }
+                        
+                        profiles.add(new ProfileOption(
+                            t.getId().toString(), 
+                            u.getRole().name(), 
+                            label, 
+                            u.getNome()
+                        ));
+                    }
+                } 
+                else if (u.getRole() == Role.ADMIN) {
+                    profiles.add(new ProfileOption(
+                        u.getId().toString(), 
+                        u.getRole().name(), 
+                        "Administração Global", 
+                        u.getNome()
+                    ));
+                }
+            }
+
+            if (profiles.size() > 1) {
+                return new LoginResponse(true, profiles);
             }
         }
 
+        User user = validUsers.get(0); 
+
         if (dto.selectedProfileId() != null && !dto.selectedProfileId().isBlank()) {
-            UUID selectedTenantId = UUID.fromString(dto.selectedProfileId());
+            UUID selectedId = UUID.fromString(dto.selectedProfileId());
             boolean found = false;
+            
             for(User u : validUsers) {
-                Optional<Tenant> t = u.getTenants().stream().filter(tn -> tn.getId().equals(selectedTenantId)).findFirst();
+                Optional<Tenant> t = u.getTenants().stream().filter(tn -> tn.getId().equals(selectedId)).findFirst();
                 if(t.isPresent()) {
                     user = u;
                     user.setTenant(t.get());
                     found = true;
                     break;
                 }
+                if(u.getId().equals(selectedId)) {
+                    user = u;
+                    found = true;
+                    break;
+                }
             }
-            if(!found) throw new RuntimeException("Você não tem acesso a este condomínio.");
+            if(!found) throw new RuntimeException("Você não tem acesso a este perfil.");
 
         } else if (user.getTenants() != null && !user.getTenants().isEmpty()) {
             user.setTenant(user.getTenants().get(0));
@@ -122,7 +160,7 @@ public class AuthService {
             token, "Bearer", user.getId().toString(), user.getNome(), user.getEmail(), 
             user.getRole().name(), 
             user.getTenant() != null ? user.getTenant().getId().toString() : null,
-            user.getTenant() != null ? user.getTenant().getNome() : "Sem Condomínio",
+            user.getTenant() != null ? user.getTenant().getNome() : "Acesso Global",
             user.getBloco(), user.getUnidade(), user.getCpf(),     
             unidadesDoMorador, false, false, null 
         );
@@ -133,6 +171,8 @@ public class AuthService {
         Plano plano = planoRepository.findById(UUID.fromString(dto.planId()))
             .orElseThrow(() -> new RuntimeException("Plano não encontrado."));
 
+        // CORREÇÃO AQUI: Em vez de findAllByCnpj, usamos a lógica do leque para buscar os tenants existentes
+        // e evitar o erro de non-unique result sem precisar de novos métodos no Repository.
         Optional<Tenant> existingTenantOpt = tenantRepository.findByCnpj(dto.cnpj());
         Tenant tenant;
 
@@ -164,11 +204,13 @@ public class AuthService {
         tenant = tenantRepository.save(tenant);
         final Tenant finalTenant = tenant; 
 
-        Optional<User> existingUserOpt = userRepository.findByEmail(dto.emailSyndic());
+        // Busca usuários candidatos para evitar o erro de resultado não único
+        List<User> candidates = userRepository.findAllByEmailOrCpf(dto.emailSyndic(), dto.emailSyndic());
         User syndic;
 
-        if (existingUserOpt.isPresent()) {
-            syndic = existingUserOpt.get();
+        if (!candidates.isEmpty()) {
+            syndic = candidates.get(0);
+            // Verifica se a senha confere se o usuário já existir
             if (!passwordEncoder.matches(dto.passwordSyndic(), syndic.getPassword())) {
                 throw new RuntimeException("Este e-mail já existe. Senha incorreta.");
             }
@@ -193,7 +235,6 @@ public class AuthService {
         String redirectUrl = null;
         String pixPayload = null;
         String pixImage = null;
-
         String nomePlano = plano.getNome().toLowerCase();
 
         Afiliado afiliadoResponsavel = null;
@@ -215,7 +256,6 @@ public class AuthService {
                 if (valorFinal.compareTo(BigDecimal.ZERO) > 0) {
                     String customerId = asaasClient.createCustomer(dto.nameSyndic(), dto.cpfSyndic(), dto.emailSyndic());
                     tenant.setAsaasCustomerId(customerId);
-                    
                     Map<String, Object> charge = asaasClient.createPixCharge(customerId, valorFinal);
                     
                     if (charge != null) {
@@ -224,17 +264,13 @@ public class AuthService {
                         
                         if (afiliadoResponsavel != null) {
                             BigDecimal valorComissao = valorFinal.multiply(new BigDecimal("0.20")); 
-                            
                             Comissao comissao = new Comissao();
                             comissao.setAfiliado(afiliadoResponsavel);
-                            
-                            // CORREÇÃO DOS SETTERS PARA CONFORME A CLASSE COMISSAO.JAVA
                             comissao.setCondominioPagante(finalTenant); 
                             comissao.setValor(valorComissao);
                             comissao.setDataVenda(LocalDate.now()); 
                             comissao.setDataLiberacao(LocalDate.now().plusDays(30));
                             comissao.setStatus(StatusComissao.BLOQUEADO); 
-                            
                             comissaoRepository.save(comissao);
                         }
                     }
@@ -246,9 +282,7 @@ public class AuthService {
             } catch (Exception e) {
                 throw new RuntimeException("Erro financeiro: " + e.getMessage());
             }
-
         } else {
-            // Lógica Kiwify... (Mantida)
             String cycle = dto.cycle() != null ? dto.cycle().toUpperCase() : "ANUAL";
             String baseUrl = "";
             if (nomePlano.contains("essencial")) {
@@ -256,10 +290,8 @@ public class AuthService {
             } else if (nomePlano.contains("business")) {
                 baseUrl = "TRIMESTRAL".equals(cycle) ? linkBusinessTrimestral : linkBusinessAnual;
             }
-            
             String params = "?email=" + dto.emailSyndic() + "&name=" + dto.nameSyndic() + "&cpf=" + dto.cpfSyndic();
             if (dto.affiliateCode() != null) params += "&src=" + dto.affiliateCode(); 
-            
             if (!baseUrl.isEmpty()) redirectUrl = baseUrl + params;
         }
 
