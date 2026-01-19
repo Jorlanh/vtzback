@@ -142,7 +142,53 @@ public class AssemblyController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    // --- ENDPOINT DE VOTO ATUALIZADO ---
+    /**
+     * ENDPOINT PARA EDITAR ASSEMBLEIA (Resolve o erro 500 no PUT)
+     */
+    @PutMapping("/{id}")
+    @Transactional
+    public ResponseEntity<?> atualizarAssembleia(@PathVariable UUID id, @RequestBody Assembly updatedAssembly, @AuthenticationPrincipal User currentUser) {
+        try {
+            return assemblyRepository.findById(id).map(existingAssembly -> {
+                existingAssembly.setTitulo(updatedAssembly.getTitulo());
+                existingAssembly.setDescription(updatedAssembly.getDescription());
+                existingAssembly.setDataInicio(updatedAssembly.getDataInicio());
+                existingAssembly.setDataFim(updatedAssembly.getDataFim());
+                existingAssembly.setStatus(updatedAssembly.getStatus());
+                existingAssembly.setYoutubeLiveUrl(updatedAssembly.getYoutubeLiveUrl());
+                existingAssembly.setLinkVideoConferencia(updatedAssembly.getLinkVideoConferencia());
+
+                Assembly saved = assemblyRepository.save(existingAssembly);
+                auditService.log(currentUser, existingAssembly.getTenant(), "EDITAR_ASSEMBLEIA", 
+                    "Editou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
+                
+                return ResponseEntity.ok(saved);
+            }).orElse(ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            logger.error("Erro ao editar assembleia: ", e);
+            return ResponseEntity.status(500).body(Map.of("error", "Erro interno ao editar assembleia."));
+        }
+    }
+
+    /**
+     * ENDPOINT PARA EXCLUIR ASSEMBLEIA (Resolve o erro 500 no DELETE)
+     */
+    @DeleteMapping("/{id}")
+    @Transactional
+    public ResponseEntity<?> excluirAssembleia(@PathVariable UUID id, @AuthenticationPrincipal User currentUser) {
+        try {
+            return assemblyRepository.findById(id).map(assembly -> {
+                assemblyRepository.delete(assembly);
+                auditService.log(currentUser, assembly.getTenant(), "EXCLUIR_ASSEMBLEIA", 
+                    "Excluiu a assembleia: " + assembly.getTitulo(), "ASSEMBLEIA");
+                return ResponseEntity.ok(Map.of("message", "Assembleia excluída com sucesso."));
+            }).orElse(ResponseEntity.notFound().build());
+        } catch (Exception e) {
+            logger.error("Erro ao excluir assembleia: ", e);
+            return ResponseEntity.status(500).body(Map.of("error", "Erro interno ao excluir assembleia."));
+        }
+    }
+
     @PostMapping("/{id}/vote")
     @Transactional
     public ResponseEntity<?> votar(@PathVariable UUID id, @RequestBody VoteRequest request, @AuthenticationPrincipal User currentUser) {
@@ -158,8 +204,6 @@ public class AssemblyController {
         User voter = userRepository.findById(request.userId() != null ? request.userId() : currentUser.getId())
                 .orElse(currentUser);
 
-        // --- LÓGICA MULTI-UNIDADE ---
-        // Se a lista de unidades vier nula ou vazia, usa a unidade do cadastro do usuário como fallback
         List<String> unitsToVote = (request.units() != null && !request.units().isEmpty()) 
                 ? request.units() 
                 : List.of((voter.getBloco() != null ? voter.getBloco() + " " : "") + "unidade " + voter.getUnidade());
@@ -169,10 +213,9 @@ public class AssemblyController {
 
         for (String unidadeNome : unitsToVote) {
             String nomeLimpo = unidadeNome.trim();
-            // Verifica duplicidade pela String da Unidade
             if (voteRepository.existsByAssemblyIdAndUnidade(id, nomeLimpo)) {
                 logger.warn("Unidade {} já votou na assembleia {}", nomeLimpo, id);
-                continue; // Pula essa unidade pois já votou
+                continue; 
             }
 
             Vote vote = new Vote();
@@ -181,7 +224,7 @@ public class AssemblyController {
             if (assembly.getTenant() != null) vote.setTenant(assembly.getTenant());
             
             vote.setOptionId(request.optionId());
-            vote.setUnidade(nomeLimpo); // Salva o nome da unidade
+            vote.setUnidade(nomeLimpo); 
             vote.setHash(UUID.randomUUID().toString()); 
             vote.setFraction(new BigDecimal("1.0")); 
 
@@ -213,6 +256,5 @@ public class AssemblyController {
         }).orElse(ResponseEntity.notFound().build());
     }
 
-    // ATUALIZADO PARA ACEITAR LISTA DE UNIDADES
     public record VoteRequest(String optionId, UUID userId, List<String> units) {}
 }
