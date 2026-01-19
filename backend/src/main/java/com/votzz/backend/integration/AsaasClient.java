@@ -64,7 +64,7 @@ public class AsaasClient {
             log.error("Erro API Asaas (Create Customer): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
             if (e.getResponseBodyAsString().contains("already exists")) {
                  log.warn("Cliente já existe, considere buscar antes de criar.");
-                 // Em produção, buscar ID via GET /customers
+                 // Em produção, buscar ID via GET /customers?cpfCnpj=...
                  return "cus_EXISTING_MOCK"; 
             }
             throw new RuntimeException("Erro Asaas: " + e.getResponseBodyAsString());
@@ -75,7 +75,8 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cliente Asaas (Sem ID na resposta)");
     }
 
-    // Método para ativação de plano (Split Percentual)
+    // Método para COBRANÇA DO PLANO (Split Percentual OPCIONAL)
+    // Se walletIdAfiliado for null, NÃO faz split (Pagamento vai todo para a conta mestre Votzz)
     public Map<String, Object> createPixCharge(String customerId, BigDecimal value, String walletIdAfiliado, BigDecimal percentualAfiliado) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
@@ -84,7 +85,7 @@ public class AsaasClient {
         body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
         body.put("description", "Ativação Plano Custom Votzz");
 
-        if (walletIdAfiliado != null && !walletIdAfiliado.isBlank() && percentualAfiliado.compareTo(BigDecimal.ZERO) > 0) {
+        if (walletIdAfiliado != null && !walletIdAfiliado.isBlank() && percentualAfiliado != null && percentualAfiliado.compareTo(BigDecimal.ZERO) > 0) {
             Map<String, Object> splitRule = new HashMap<>();
             splitRule.put("walletId", walletIdAfiliado);
             splitRule.put("percent", percentualAfiliado);
@@ -94,13 +95,13 @@ public class AsaasClient {
         return sendPaymentRequest(body);
     }
     
-    // Sobrecarga para compatibilidade (sem split)
+    // Sobrecarga para compatibilidade (sem split - Pagamento Integral para Votzz)
     public Map<String, Object> createPixCharge(String customerId, BigDecimal value) {
         return createPixCharge(customerId, value, null, BigDecimal.ZERO);
     }
 
-    // --- NOVO MÉTODO: Cobrança de Reserva com Split Fixo ---
-    // Usado pelo FacilitiesController e ReservationService
+    // --- NOVO MÉTODO: Cobrança de RESERVA (Split Fixo) ---
+    // Usado futuramente para reservas de área comum (Dinheiro vai para o Condomínio)
     public String criarCobrancaSplit(String customerId, BigDecimal valorTotal, String walletCondominio, BigDecimal taxaVotzz, String billingType) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
@@ -110,8 +111,8 @@ public class AsaasClient {
         body.put("description", "Reserva de Área Comum");
 
         // Regra de Split: 
-        // Se houver wallet do condomínio, mandamos o valor total MENOS a taxa da Votzz para ele.
-        // O restante (taxaVotzz) fica na conta mestre automaticamente.
+        // Se houver wallet do condomínio, mandamos o valor líquido (Total - Taxa) para ele.
+        // O restante (taxaVotzz) fica na conta mestre (Votzz) automaticamente.
         if (walletCondominio != null && !walletCondominio.isBlank()) {
             BigDecimal valorLiquidoCondominio = valorTotal.subtract(taxaVotzz);
             if (valorLiquidoCondominio.compareTo(BigDecimal.ZERO) > 0) {
@@ -141,7 +142,7 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cobrança split");
     }
 
-    // Método auxiliar para evitar duplicação
+    // Método auxiliar para evitar duplicação e pegar QR Code
     private Map<String, Object> sendPaymentRequest(Map<String, Object> body) {
         try {
             Map payment = getClient().post()
@@ -153,6 +154,8 @@ public class AsaasClient {
 
             if (payment != null && payment.containsKey("id")) {
                 String paymentId = (String) payment.get("id");
+                
+                // Busca QR Code
                 Map qrCode = getClient().get()
                     .uri(apiUrl + "/payments/" + paymentId + "/pixQrCode")
                     .headers(h -> h.addAll(getHeaders()))

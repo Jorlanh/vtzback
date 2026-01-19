@@ -52,10 +52,13 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
                 .requestMatchers("/api/auth/2fa/**").authenticated()
 
+                // --- LIBERAÇÃO DE ROTAS PÚBLICAS ---
                 .requestMatchers(
                     "/api/auth/login",
                     "/api/auth/register-resident",
                     "/api/auth/register-affiliate",
+                    "/api/auth/register-condo", // <--- LINHA ADICIONADA: Corrige o erro 403
+                    "/api/auth/condo-register",
                     "/api/auth/refresh",
                     "/api/auth/forgot-password",
                     "/api/auth/reset-password",
@@ -70,11 +73,11 @@ public class SecurityConfig {
                 .requestMatchers("/api/admin/**").hasAuthority("ADMIN") 
                 .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
                 
-                // --- AJUSTE AQUI: Morador pode ver Financeiro e Relatórios (Apenas GET) ---
+                // Permissões Financeiro e Relatórios
                 .requestMatchers(HttpMethod.GET, "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
                 .requestMatchers("/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
                 
-                // Auditoria e Banco continuam restritos a gestores
+                // Auditoria e Banco
                 .requestMatchers("/api/tenants/audit-logs", "/api/tenants/bank-info").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
                 .requestMatchers("/api/tenants/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
                 

@@ -87,6 +87,7 @@ public class AuthDTOs {
         Integer qtyUnits,
         Integer qtyBlocks,
         String secretKeyword,
+        String cycle, // Campo necessário para o ciclo de pagamento
         
         String nameSyndic,
         String emailSyndic,
@@ -102,7 +103,8 @@ public class AuthDTOs {
         String estado,
         String pontoReferencia,
 
-        String couponCode
+        String couponCode,   // Cupom de Desconto
+        String affiliateCode // Novo campo: Código do Afiliado
     ) {}
 
     public record RegisterResponse(
