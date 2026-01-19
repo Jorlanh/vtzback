@@ -50,14 +50,13 @@ public class SecurityConfig {
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
-                .requestMatchers("/api/auth/2fa/**").authenticated()
 
-                // --- LIBERAÇÃO DE ROTAS PÚBLICAS ---
+                // Rotas Públicas
                 .requestMatchers(
                     "/api/auth/login",
                     "/api/auth/register-resident",
                     "/api/auth/register-affiliate",
-                    "/api/auth/register-condo", // <--- LINHA ADICIONADA: Corrige o erro 403
+                    "/api/auth/register-condo",
                     "/api/auth/condo-register",
                     "/api/auth/refresh",
                     "/api/auth/forgot-password",
@@ -66,26 +65,29 @@ public class SecurityConfig {
                     "/api/tenants/public-list",
                     "/api/tenants/identifier/**", 
                     "/ws-votzz/**",           
-                    "/h2-console/**"          
+                    "/h2-console/**",
+                    "/error"
                 ).permitAll()
 
-                .requestMatchers("/api/payments/create-custom").authenticated() 
-                .requestMatchers("/api/admin/**").hasAuthority("ADMIN") 
+                // Rotas específicas
+                .requestMatchers(HttpMethod.GET, "/api/assemblies/*/dossier").authenticated()
+
+                // Regras por Role
+                .requestMatchers("/api/admin/**").hasAuthority("ADMIN")
                 .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
-                
-                // Permissões Financeiro e Relatórios
+
+                // Dashboard e Financeiro (Permite visualização para Morador e gestão para outros)
                 .requestMatchers(HttpMethod.GET, "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
                 .requestMatchers("/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
-                
-                // Auditoria e Banco
+
                 .requestMatchers("/api/tenants/audit-logs", "/api/tenants/bank-info").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
                 .requestMatchers("/api/tenants/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
-                
+
                 .requestMatchers("/api/users/**").authenticated()
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
-            
+
         http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
 
         return http.build();
@@ -94,10 +96,24 @@ public class SecurityConfig {
     @Bean
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-        config.setAllowedOrigins(allowedOrigins); 
+
+        // Remove espaços em branco das origens (prevenção contra erros no application.properties)
+        List<String> cleanedOrigins = allowedOrigins.stream().map(String::trim).toList();
+        config.setAllowedOrigins(cleanedOrigins);
+
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token"));
+
+        // IMPORTANTE: Adicionado X-Tenant-ID para permitir a comunicação multi-condomínio
+        config.setAllowedHeaders(List.of(
+            "Authorization",
+            "Content-Type",
+            "X-Tenant-ID",
+            "X-Simulated-User",
+            "asaas-access-token"
+        ));
+
         config.setAllowCredentials(true);
+        config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
         source.registerCorsConfiguration("/**", config);
