@@ -42,12 +42,16 @@ public class AsaasClient {
 
     // --- MÉTODOS ---
 
-    public String createCustomer(String name, String cpfCnpj, String email) {
+    public String createCustomer(String name, String cpfCnpj, String email, String mobilePhone) {
         String cleanCpf = cpfCnpj != null ? cpfCnpj.replaceAll("\\D", "") : "";
         Map<String, String> body = new HashMap<>();
         body.put("name", name);
         body.put("cpfCnpj", cleanCpf);
         body.put("email", email);
+        
+        if (mobilePhone != null && !mobilePhone.isBlank()) {
+            body.put("mobilePhone", mobilePhone.replaceAll("\\D", ""));
+        }
 
         try {
             Map response = getClient().post()
@@ -63,11 +67,10 @@ public class AsaasClient {
         } catch (RestClientResponseException e) {
             log.error("Erro API Asaas (Create Customer): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
             if (e.getResponseBodyAsString().contains("already exists")) {
-                 log.warn("Cliente já existe, considere buscar antes de criar.");
-                 // Em produção, buscar ID via GET /customers?cpfCnpj=...
-                 return "cus_EXISTING_MOCK"; 
+                 log.info("Cliente já existe no Asaas. Buscando ID original...");
+                 return fetchCustomerIdByCpf(cleanCpf);
             }
-            throw new RuntimeException("Erro Asaas: " + e.getResponseBodyAsString());
+            throw new RuntimeException("Erro Asaas ao criar cliente: " + e.getResponseBodyAsString());
         } catch (Exception e) {
             log.error("Erro Genérico Asaas createCustomer: {}", e.getMessage());
             throw new RuntimeException("Falha de conexão com Asaas");
@@ -75,8 +78,42 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cliente Asaas (Sem ID na resposta)");
     }
 
-    // Método para COBRANÇA DO PLANO (Split Percentual OPCIONAL)
-    // Se walletIdAfiliado for null, NÃO faz split (Pagamento vai todo para a conta mestre Votzz)
+    private String fetchCustomerIdByCpf(String cpfCnpj) {
+        try {
+            Map response = getClient().get()
+                .uri(apiUrl + "/customers?cpfCnpj=" + cpfCnpj)
+                .headers(h -> h.addAll(getHeaders()))
+                .retrieve()
+                .body(Map.class);
+
+            if (response != null && response.containsKey("data")) {
+                List<Map> data = (List<Map>) response.get("data");
+                if (!data.isEmpty()) {
+                    return (String) data.get(0).get("id");
+                }
+            }
+        } catch (Exception e) {
+            log.error("Erro ao buscar cliente existente: {}", e.getMessage());
+        }
+        throw new RuntimeException("Cliente existe no Asaas mas não foi possível recuperar o ID.");
+    }
+
+    // --- NOVO MÉTODO: Criação de Cobrança Híbrida (Link de Pagamento) ---
+    public Map<String, Object> createSubscriptionCharge(String customerId, BigDecimal value, int maxInstallmentCount) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("customer", customerId);
+        // "UNDEFINED" permite que o cliente escolha Pix, Boleto ou Cartão
+        body.put("billingType", "UNDEFINED"); 
+        body.put("value", value);
+        body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
+        body.put("description", "Assinatura Votzz - Plano Custom");
+        
+        // Define o limite de parcelas
+        body.put("maxInstallmentCount", maxInstallmentCount);
+
+        return sendPaymentRequest(body);
+    }
+
     public Map<String, Object> createPixCharge(String customerId, BigDecimal value, String walletIdAfiliado, BigDecimal percentualAfiliado) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
@@ -91,17 +128,13 @@ public class AsaasClient {
             splitRule.put("percent", percentualAfiliado);
             body.put("split", List.of(splitRule));
         }
-
         return sendPaymentRequest(body);
     }
     
-    // Sobrecarga para compatibilidade (sem split - Pagamento Integral para Votzz)
     public Map<String, Object> createPixCharge(String customerId, BigDecimal value) {
         return createPixCharge(customerId, value, null, BigDecimal.ZERO);
     }
 
-    // --- NOVO MÉTODO: Cobrança de RESERVA (Split Fixo) ---
-    // Usado futuramente para reservas de área comum (Dinheiro vai para o Condomínio)
     public String criarCobrancaSplit(String customerId, BigDecimal valorTotal, String walletCondominio, BigDecimal taxaVotzz, String billingType) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
@@ -110,16 +143,12 @@ public class AsaasClient {
         body.put("dueDate", LocalDate.now().plusDays(3).toString());
         body.put("description", "Reserva de Área Comum");
 
-        // Regra de Split: 
-        // Se houver wallet do condomínio, mandamos o valor líquido (Total - Taxa) para ele.
-        // O restante (taxaVotzz) fica na conta mestre (Votzz) automaticamente.
         if (walletCondominio != null && !walletCondominio.isBlank()) {
             BigDecimal valorLiquidoCondominio = valorTotal.subtract(taxaVotzz);
             if (valorLiquidoCondominio.compareTo(BigDecimal.ZERO) > 0) {
                 Map<String, Object> splitRule = new HashMap<>();
                 splitRule.put("walletId", walletCondominio);
                 splitRule.put("fixedValue", valorLiquidoCondominio);
-                
                 body.put("split", List.of(splitRule));
             }
         }
@@ -142,7 +171,6 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cobrança split");
     }
 
-    // Método auxiliar para evitar duplicação e pegar QR Code
     private Map<String, Object> sendPaymentRequest(Map<String, Object> body) {
         try {
             Map payment = getClient().post()
@@ -153,25 +181,36 @@ public class AsaasClient {
                 .body(Map.class);
 
             if (payment != null && payment.containsKey("id")) {
-                String paymentId = (String) payment.get("id");
+                Map<String, Object> result = new HashMap<>();
+                result.put("paymentId", payment.get("id"));
+                result.put("value", body.get("value"));
                 
-                // Busca QR Code
-                Map qrCode = getClient().get()
-                    .uri(apiUrl + "/payments/" + paymentId + "/pixQrCode")
-                    .headers(h -> h.addAll(getHeaders()))
-                    .retrieve()
-                    .body(Map.class);
-                
-                if (qrCode != null) {
-                    qrCode.put("paymentId", paymentId);
+                // Se for UNDEFINED (Link de Pagamento)
+                if (payment.containsKey("invoiceUrl")) {
+                    result.put("invoiceUrl", payment.get("invoiceUrl"));
                 }
-                return qrCode;
+                // Se for PIX direto
+                else if ("PIX".equals(body.get("billingType"))) {
+                     try {
+                         Map qrCode = getClient().get()
+                            .uri(apiUrl + "/payments/" + payment.get("id") + "/pixQrCode")
+                            .headers(h -> h.addAll(getHeaders()))
+                            .retrieve().body(Map.class);
+                         if (qrCode != null) {
+                             result.put("encodedImage", qrCode.get("encodedImage"));
+                             result.put("payload", qrCode.get("payload"));
+                         }
+                     } catch(Exception e) {
+                         log.warn("Falha ao buscar QR Code Pix: {}", e.getMessage());
+                     }
+                }
+                return result;
             }
         } catch (RestClientResponseException e) {
-            log.error("Erro Pix Asaas: {}", e.getResponseBodyAsString());
-            throw new RuntimeException("Erro ao gerar Pix: " + e.getResponseBodyAsString());
+            log.error("Erro Pagamento Asaas: {}", e.getResponseBodyAsString());
+            throw new RuntimeException("Erro Asaas: " + e.getResponseBodyAsString());
         }
-        throw new RuntimeException("Erro interno ao gerar Pix.");
+        throw new RuntimeException("Erro interno ao gerar cobrança.");
     }
 
     public String transferirPix(String chavePix, BigDecimal valor) {
@@ -190,7 +229,7 @@ public class AsaasClient {
             return (String) response.get("id");
         } catch (RestClientResponseException e) {
             log.error("Erro Transferência Pix: {}", e.getResponseBodyAsString());
-            return "ERR_TRANSFER"; // Ou lançar exceção
+            return "ERR_TRANSFER"; 
         }
     }
 }

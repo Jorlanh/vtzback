@@ -5,119 +5,138 @@ import com.votzz.backend.domain.Subscription;
 import com.votzz.backend.domain.Tenant;
 import com.votzz.backend.repository.SubscriptionRepository;
 import com.votzz.backend.repository.TenantRepository;
-import com.votzz.backend.integration.AsaasClient; 
-import org.springframework.beans.factory.annotation.Autowired;
+import com.votzz.backend.integration.AsaasClient;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.HashMap;
 import java.util.Map;
 import java.util.UUID;
 
 @Service
+@Slf4j
+@RequiredArgsConstructor
 public class SubscriptionService {
 
-    @Autowired
-    private SubscriptionRepository subscriptionRepository;
+    private final SubscriptionRepository subscriptionRepository;
+    private final TenantRepository tenantRepository;
+    private final AsaasClient asaasClient;
 
-    @Autowired
-    private TenantRepository tenantRepository;
-    
-    @Autowired
-    private AsaasClient asaasClient;
+    @Value("${votzz.kiwify.essencial.trimestral}") private String linkEssencialTrim;
+    @Value("${votzz.kiwify.essencial.anual}") private String linkEssencialAnual;
+    @Value("${votzz.kiwify.business.trimestral}") private String linkBusinessTrim;
+    @Value("${votzz.kiwify.business.anual}") private String linkBusinessAnual;
 
     /**
-     * Gera o checkout (PIX) no Asaas
+     * Verifica se o condomínio precisa renovar (Faltando 60 dias ou menos)
      */
-    public Map<String, Object> createCheckout(String planType, String cycle, int units, Tenant tenant, String userEmail) {
-        BigDecimal price = calculatePrice(units, cycle);
+    public Map<String, Object> checkRenewalStatus(Tenant tenant) {
+        LocalDate expiration = tenant.getDataExpiracaoPlano();
+        Map<String, Object> response = new HashMap<>();
+        
+        response.put("currentPlan", tenant.getPlano().getNome());
+        response.put("units", tenant.getUnidadesTotal());
+        response.put("expirationDate", expiration);
 
-        // 1. Garante cliente no Asaas
-        String asaasId = tenant.getAsaasCustomerId();
-        if (asaasId == null) {
-            asaasId = asaasClient.createCustomer(tenant.getNome(), tenant.getCnpj(), userEmail);
-            tenant.setAsaasCustomerId(asaasId);
-            tenantRepository.save(tenant);
+        if (expiration == null) {
+            response.put("needsRenewal", true);
+            response.put("daysRemaining", 0);
+            return response;
         }
 
-        // 2. Cria cobrança
-        Map<String, Object> pixData = asaasClient.createPixCharge(asaasId, price);
+        long daysRemaining = ChronoUnit.DAYS.between(LocalDate.now(), expiration);
         
-        // Adiciona o valor calculado ao retorno para conferência
-        pixData.put("value", price);
+        // REGRA: Aparece se faltar 60 dias ou menos
+        boolean needsRenewal = daysRemaining <= 60;
+
+        response.put("needsRenewal", needsRenewal);
+        response.put("daysRemaining", daysRemaining);
         
-        return pixData;
+        return response;
     }
 
     /**
-     * Lógica de Preço Especificada:
-     * Business: Trimestral (1.047) | Anual (3.350,40)
-     * Custom: Base do Business + (1,50 * unidades)
+     * Gera o Checkout de Renovação ou Novo Cadastro
      */
-    private BigDecimal calculatePrice(int units, String cycle) {
-        BigDecimal baseTrimestral = new BigDecimal("1047.00");
-        BigDecimal baseAnual = new BigDecimal("3350.40");
+    public Map<String, Object> createCheckout(String planType, String cycle, int units, Tenant tenant, String userEmail, String mobilePhone) {
+        String planName = planType.toLowerCase();
         
-        BigDecimal finalPrice;
-
-        // Se for Trimestral
-        if ("TRIMESTRAL".equalsIgnoreCase(cycle)) {
-            finalPrice = baseTrimestral;
-        } else {
-            // Anual
-            finalPrice = baseAnual;
-        }
-
-        // Se for Custom (> 80 unidades), adiciona a taxa por unidade
-        if (units > 80) {
-            // Lógica: Preço Base + (1.50 * total de unidades)
-            BigDecimal unitPrice = new BigDecimal("1.50");
-            BigDecimal variablePart = unitPrice.multiply(new BigDecimal(units));
+        // 1. LÓGICA KIWIFY (Planos Essencial e Business)
+        if (planName.contains("essencial") || planName.contains("business")) {
+            String baseUrl = "";
+            if (planName.contains("essencial")) {
+                baseUrl = "TRIMESTRAL".equalsIgnoreCase(cycle) ? linkEssencialTrim : linkEssencialAnual;
+            } else {
+                baseUrl = "TRIMESTRAL".equalsIgnoreCase(cycle) ? linkBusinessTrim : linkBusinessAnual;
+            }
             
-            finalPrice = finalPrice.add(variablePart);
+            String checkoutUrl = baseUrl + "?email=" + userEmail + "&name=" + tenant.getNome();
+            return Map.of("redirectUrl", checkoutUrl, "gateway", "KIWIFY");
         }
+
+        // 2. LÓGICA ASAAS (Plano Custom)
+        BigDecimal price = calculatePrice(units, cycle);
+        int maxInstallments = "TRIMESTRAL".equalsIgnoreCase(cycle) ? 3 : 12;
+
+        try {
+            String asaasId = tenant.getAsaasCustomerId();
+            
+            if (asaasId == null || asaasId.isBlank()) {
+                asaasId = asaasClient.createCustomer(tenant.getNome(), tenant.getCnpj(), userEmail, mobilePhone);
+                tenant.setAsaasCustomerId(asaasId);
+                tenantRepository.save(tenant);
+            }
+
+            Map<String, Object> chargeData = asaasClient.createSubscriptionCharge(asaasId, price, maxInstallments);
+            chargeData.put("calculatedValue", price);
+            chargeData.put("redirectUrl", chargeData.get("invoiceUrl")); // Padroniza para o Front
+            chargeData.put("gateway", "ASAAS");
+            
+            return chargeData;
+
+        } catch (Exception e) {
+            log.error("Erro checkout Asaas: {}", e.getMessage());
+            throw new RuntimeException("Erro ao processar assinatura Custom: " + e.getMessage());
+        }
+    }
+
+    public BigDecimal calculatePrice(int units, String cycle) {
+        BigDecimal baseMensal = (units <= 30) ? new BigDecimal("190.00") : new BigDecimal("349.00");
         
+        if (units > 80) {
+            BigDecimal extras = new BigDecimal(units - 80);
+            baseMensal = baseMensal.add(extras.multiply(new BigDecimal("1.50")));
+        }
+
+        BigDecimal finalPrice;
+        if ("TRIMESTRAL".equalsIgnoreCase(cycle)) {
+            finalPrice = baseMensal.multiply(new BigDecimal("3"));
+        } else {
+            finalPrice = baseMensal.multiply(new BigDecimal("12")).multiply(new BigDecimal("0.80"));
+        }
+
         return finalPrice.setScale(2, RoundingMode.HALF_EVEN);
     }
-    
-    /**
-     * Busca a assinatura do contexto atual
-     */
+
     public Subscription getMySubscription() {
         UUID tenantId = TenantContext.getCurrentTenant();
-        if (tenantId == null) return null;
-        
-        // CORREÇÃO: Alterado de OrderByEndDateDesc para OrderByNextBillingDateDesc
-        // Isso deve corresponder ao nome do método definido no SubscriptionRepository
-        return subscriptionRepository.findFirstByTenantIdOrderByNextBillingDateDesc(tenantId).orElse(null);
+        return tenantId == null ? null : subscriptionRepository.findFirstByTenantIdOrderByNextBillingDateDesc(tenantId).orElse(null);
     }
 
-    /**
-     * Renova a assinatura
-     */
     @Transactional
     public void renewSubscription(Tenant tenant, int monthsToAdd) {
         LocalDate today = LocalDate.now();
-        // Nota: Ajuste se o campo na entidade for 'nextBillingDate' e do tipo LocalDateTime
-        // Aqui estou assumindo que você tem um método auxiliar ou que a entidade usa LocalDate.
-        // Se a entidade usa LocalDateTime para nextBillingDate, use: tenant.getNextBillingDate().toLocalDate()
-        // Abaixo segue lógica genérica baseada no seu código anterior:
-        
-        // Exemplo adaptado para LocalDateTime se necessário (verifique sua entidade Tenant/Subscription)
-        // Se Tenant tem 'dataExpiracaoPlano' (LocalDate), mantenha assim:
-        LocalDate currentExpiration = tenant.getDataExpiracaoPlano();
-        LocalDate newExpirationDate;
+        LocalDate currentExp = tenant.getDataExpiracaoPlano();
+        LocalDate newDate = (currentExp == null || currentExp.isBefore(today)) ? today.plusMonths(monthsToAdd) : currentExp.plusMonths(monthsToAdd);
 
-        if (currentExpiration == null || currentExpiration.isBefore(today)) {
-            newExpirationDate = today.plusMonths(monthsToAdd);
-        } else {
-            newExpirationDate = currentExpiration.plusMonths(monthsToAdd);
-        }
-
-        tenant.setDataExpiracaoPlano(newExpirationDate);
-        // tenant.setAtivo(true); 
+        tenant.setDataExpiracaoPlano(newDate);
         tenantRepository.save(tenant);
     }
 }

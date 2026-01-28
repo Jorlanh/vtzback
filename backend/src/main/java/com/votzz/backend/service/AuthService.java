@@ -31,6 +31,7 @@ public class AuthService {
     private final PasswordEncoder passwordEncoder;
     private final AsaasClient asaasClient;
     private final TokenService tokenService; 
+    private final SubscriptionService subscriptionService; 
 
     @Value("${votzz.kiwify.essencial.trimestral}")
     private String linkEssencialTrimestral;
@@ -42,91 +43,49 @@ public class AuthService {
     private String linkBusinessAnual;
 
     public LoginResponse login(LoginRequest dto) {
-        // 1. Busca todos os usuários que batem com o login (E-mail ou CPF)
         List<User> candidates = userRepository.findAllByEmailOrCpf(dto.login(), dto.login());
+        if (candidates.isEmpty()) throw new RuntimeException("Usuário ou senha inválidos.");
 
-        if (candidates.isEmpty()) {
-            throw new RuntimeException("Usuário ou senha inválidos.");
-        }
-
-        // 2. Filtra apenas os usuários onde a senha bate
         List<User> validUsers = candidates.stream()
                 .filter(u -> passwordEncoder.matches(dto.password(), u.getPassword()))
                 .collect(Collectors.toList());
 
-        if (validUsers.isEmpty()) {
-            throw new RuntimeException("Usuário ou senha inválidos.");
-        }
+        if (validUsers.isEmpty()) throw new RuntimeException("Usuário ou senha inválidos.");
 
-        // --- LÓGICA DO LEQUE (Múltiplas Contas/Perfis) ---
-        
         boolean needsProfileSelection = dto.selectedProfileId() == null || dto.selectedProfileId().isBlank();
 
         if (needsProfileSelection) {
             List<ProfileOption> profiles = new ArrayList<>();
-
             for (User u : validUsers) {
                 if (u.getRole() == Role.AFILIADO) {
-                    profiles.add(new ProfileOption(
-                        u.getId().toString(), 
-                        u.getRole().name(), 
-                        "Painel de Afiliado", 
-                        u.getNome()
-                    ));
+                    profiles.add(new ProfileOption(u.getId().toString(), u.getRole().name(), "Painel de Afiliado", u.getNome()));
                 }
-
                 if (u.getTenants() != null && !u.getTenants().isEmpty()) {
                     for (Tenant t : u.getTenants()) {
                         String label = t.getNome();
                         if (u.getRole() == Role.MORADOR) {
                             label += " - Unidade: " + (u.getUnidade() != null ? u.getUnidade() : "N/A");
                         }
-                        
-                        profiles.add(new ProfileOption(
-                            t.getId().toString(), 
-                            u.getRole().name(), 
-                            label, 
-                            u.getNome()
-                        ));
+                        profiles.add(new ProfileOption(t.getId().toString(), u.getRole().name(), label, u.getNome()));
                     }
                 } 
                 else if (u.getRole() == Role.ADMIN) {
-                    profiles.add(new ProfileOption(
-                        u.getId().toString(), 
-                        u.getRole().name(), 
-                        "Administração Global", 
-                        u.getNome()
-                    ));
+                    profiles.add(new ProfileOption(u.getId().toString(), u.getRole().name(), "Administração Global", u.getNome()));
                 }
             }
-
-            if (profiles.size() > 1) {
-                return new LoginResponse(true, profiles);
-            }
+            if (profiles.size() > 1) return new LoginResponse(true, profiles);
         }
 
         User user = validUsers.get(0); 
-
         if (dto.selectedProfileId() != null && !dto.selectedProfileId().isBlank()) {
             UUID selectedId = UUID.fromString(dto.selectedProfileId());
             boolean found = false;
-            
             for(User u : validUsers) {
                 Optional<Tenant> t = u.getTenants().stream().filter(tn -> tn.getId().equals(selectedId)).findFirst();
-                if(t.isPresent()) {
-                    user = u;
-                    user.setTenant(t.get());
-                    found = true;
-                    break;
-                }
-                if(u.getId().equals(selectedId)) {
-                    user = u;
-                    found = true;
-                    break;
-                }
+                if(t.isPresent()) { user = u; user.setTenant(t.get()); found = true; break; }
+                if(u.getId().equals(selectedId)) { user = u; found = true; break; }
             }
             if(!found) throw new RuntimeException("Você não tem acesso a este perfil.");
-
         } else if (user.getTenants() != null && !user.getTenants().isEmpty()) {
             user.setTenant(user.getTenants().get(0));
         }
@@ -171,8 +130,6 @@ public class AuthService {
         Plano plano = planoRepository.findById(UUID.fromString(dto.planId()))
             .orElseThrow(() -> new RuntimeException("Plano não encontrado."));
 
-        // CORREÇÃO AQUI: Em vez de findAllByCnpj, usamos a lógica do leque para buscar os tenants existentes
-        // e evitar o erro de non-unique result sem precisar de novos métodos no Repository.
         Optional<Tenant> existingTenantOpt = tenantRepository.findByCnpj(dto.cnpj());
         Tenant tenant;
 
@@ -204,13 +161,11 @@ public class AuthService {
         tenant = tenantRepository.save(tenant);
         final Tenant finalTenant = tenant; 
 
-        // Busca usuários candidatos para evitar o erro de resultado não único
         List<User> candidates = userRepository.findAllByEmailOrCpf(dto.emailSyndic(), dto.emailSyndic());
         User syndic;
 
         if (!candidates.isEmpty()) {
             syndic = candidates.get(0);
-            // Verifica se a senha confere se o usuário já existir
             if (!passwordEncoder.matches(dto.passwordSyndic(), syndic.getPassword())) {
                 throw new RuntimeException("Este e-mail já existe. Senha incorreta.");
             }
@@ -246,43 +201,45 @@ public class AuthService {
         }
 
         if (nomePlano.contains("custom")) {
-            BigDecimal valorFinal = calcularValorCustom(dto.qtyUnits(), plano.getCiclo());
+            Map<String, Object> checkoutData = subscriptionService.createCheckout(
+                "Custom", 
+                dto.cycle(), 
+                dto.qtyUnits(),
+                finalTenant,
+                dto.emailSyndic(),
+                dto.whatsappSyndic() 
+            );
             
+            BigDecimal valorFinal = (BigDecimal) checkoutData.get("calculatedValue"); // Correção para pegar o valor calculado
             if (dto.couponCode() != null && !dto.couponCode().trim().isEmpty()) {
-                valorFinal = aplicarCupom(dto.couponCode(), valorFinal);
+                 valorFinal = aplicarCupom(dto.couponCode(), valorFinal);
             }
 
-            try {
-                if (valorFinal.compareTo(BigDecimal.ZERO) > 0) {
-                    String customerId = asaasClient.createCustomer(dto.nameSyndic(), dto.cpfSyndic(), dto.emailSyndic());
-                    tenant.setAsaasCustomerId(customerId);
-                    Map<String, Object> charge = asaasClient.createPixCharge(customerId, valorFinal);
-                    
-                    if (charge != null) {
-                        pixPayload = (String) charge.get("payload");
-                        pixImage = (String) charge.get("encodedImage");
-                        
-                        if (afiliadoResponsavel != null) {
-                            BigDecimal valorComissao = valorFinal.multiply(new BigDecimal("0.20")); 
-                            Comissao comissao = new Comissao();
-                            comissao.setAfiliado(afiliadoResponsavel);
-                            comissao.setCondominioPagante(finalTenant); 
-                            comissao.setValor(valorComissao);
-                            comissao.setDataVenda(LocalDate.now()); 
-                            comissao.setDataLiberacao(LocalDate.now().plusDays(30));
-                            comissao.setStatus(StatusComissao.BLOQUEADO); 
-                            comissaoRepository.save(comissao);
-                        }
-                    }
-                } else {
-                    tenant.setStatusAssinatura("PAID");
-                    tenant.setAtivo(true);
-                }
-                tenantRepository.save(tenant);
-            } catch (Exception e) {
-                throw new RuntimeException("Erro financeiro: " + e.getMessage());
+            // --- CORREÇÃO CRÍTICA AQUI ---
+            // Agora pegamos 'invoiceUrl' que vem do AsaasClient
+            if (checkoutData.containsKey("invoiceUrl")) {
+                redirectUrl = (String) checkoutData.get("invoiceUrl");
             }
+            
+            // Pix Payload e Image agora ficam null, pois o checkout é externo
+            pixPayload = null; 
+            pixImage = null;
+            
+            // Lógica de Afiliado
+            if (afiliadoResponsavel != null) {
+                BigDecimal valorComissao = valorFinal.multiply(new BigDecimal("0.20")); 
+                Comissao comissao = new Comissao();
+                comissao.setAfiliado(afiliadoResponsavel);
+                comissao.setCondominioPagante(finalTenant); 
+                comissao.setValor(valorComissao);
+                comissao.setDataVenda(LocalDate.now()); 
+                comissao.setDataLiberacao(LocalDate.now().plusDays(30));
+                comissao.setStatus(StatusComissao.BLOQUEADO); 
+                comissaoRepository.save(comissao);
+            }
+
         } else {
+            // Lógica Kiwify (Planos Normais)
             String cycle = dto.cycle() != null ? dto.cycle().toUpperCase() : "ANUAL";
             String baseUrl = "";
             if (nomePlano.contains("essencial")) {
@@ -305,19 +262,6 @@ public class AuthService {
         if (coupon.getExpirationDate() != null && coupon.getExpirationDate().isBefore(LocalDateTime.now())) throw new RuntimeException("Este cupom expirou.");
         BigDecimal desconto = valorOriginal.multiply(coupon.getDiscountPercent()).divide(new BigDecimal("100"), 2, RoundingMode.HALF_EVEN);
         return valorOriginal.subtract(desconto).max(BigDecimal.ZERO);
-    }
-
-    private BigDecimal calcularValorCustom(int unidades, Plano.Ciclo ciclo) {
-        BigDecimal basePrice = new BigDecimal("349.00"); 
-        BigDecimal extraUnitCost = new BigDecimal("1.50");
-        int franquia = 80;
-        BigDecimal valorMensal = basePrice;
-        if (unidades > franquia) {
-            BigDecimal extras = BigDecimal.valueOf(unidades - franquia);
-            valorMensal = valorMensal.add(extras.multiply(extraUnitCost));
-        }
-        if (ciclo == Plano.Ciclo.TRIMESTRAL) return valorMensal.multiply(new BigDecimal("3"));
-        else return valorMensal.multiply(new BigDecimal("12")).multiply(new BigDecimal("0.8"));
     }
     
     public BigDecimal validateCoupon(String code) {
