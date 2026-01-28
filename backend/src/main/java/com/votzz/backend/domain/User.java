@@ -1,5 +1,6 @@
 package com.votzz.backend.domain;
 
+import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.votzz.backend.domain.enums.Role;
 import jakarta.persistence.*;
 import lombok.Data;
@@ -37,15 +38,25 @@ public class User implements UserDetails {
     private String cpf;
 
     private String whatsapp;
+    
+    // Campos legados (Mantidos para compatibilidade)
     private String unidade;
     private String bloco;
 
-    // Mantido para compatibilidade, mas o foco agora é a lista abaixo
+    // --- NOVO CAMPO: LISTA DE UNIDADES ---
+    // Isso cria uma tabela 'user_unidades' para guardar múltiplas unidades por usuário
+    @ElementCollection(fetch = FetchType.EAGER)
+    @CollectionTable(name = "user_unidades", joinColumns = @JoinColumn(name = "user_id"))
+    @Column(name = "unidade_info")
+    private List<String> unidadesList = new ArrayList<>();
+
+    // Mantido para compatibilidade legado, mas o JSON vai ignorar para evitar loops/erros
     @ManyToOne(fetch = FetchType.EAGER)
     @JoinColumn(name = "tenant_id")
+    @JsonIgnore 
     private Tenant tenant;
 
-    // --- CORREÇÃO: Adicionando a lista de condomínios para suporte Multi-Tenant ---
+    // Lista principal para Multi-Tenant (Síndicos Profissionais)
     @ManyToMany(fetch = FetchType.EAGER)
     @JoinTable(
         name = "user_tenants",
@@ -82,6 +93,11 @@ public class User implements UserDetails {
         if (createdAt == null) createdAt = LocalDateTime.now();
         if (updatedAt == null) updatedAt = LocalDateTime.now();
         if (is2faEnabled == null) is2faEnabled = false;
+        
+        // Sincronia básica: se tiver tenant na lista mas não no singular, seta o singular (opcional)
+        if (tenant == null && !tenants.isEmpty()) {
+            tenant = tenants.get(0);
+        }
     }
 
     @PreUpdate
@@ -92,6 +108,7 @@ public class User implements UserDetails {
     @Override
     public Collection<? extends GrantedAuthority> getAuthorities() {
         if (this.role == null) return List.of();
+        // Retorna a role crua (ex: "SINDICO") E a role spring (ex: "ROLE_SINDICO") para garantir compatibilidade
         return List.of(
             new SimpleGrantedAuthority(this.role.name()),
             new SimpleGrantedAuthority("ROLE_" + this.role.name())

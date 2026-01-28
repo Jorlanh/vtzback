@@ -28,15 +28,15 @@ public class PlanoService {
         } else if (qtdUnidades <= 80) {
             // Plano Business (31 a 80 un)
             nomePlano = "Business";
-            precoMensal = new BigDecimal("490.00");
+            precoMensal = new BigDecimal("349.00");
         } else {
             // Plano Custom (81+ un)
             nomePlano = "Custom";
-            BigDecimal base = new BigDecimal("490.00");
-            
-            // Regra: R$ 490 base + R$ 2,50 por unidade ADICIONAL acima de 80
+            BigDecimal base = new BigDecimal("349.00");
+
+            // Regra: R$ 349 base + R$ 1,50 por unidade ADICIONAL acima de 80
             int unidadesExtras = qtdUnidades - 80;
-            BigDecimal custoExtra = BigDecimal.valueOf(unidadesExtras).multiply(new BigDecimal("2.50"));
+            BigDecimal custoExtra = BigDecimal.valueOf(unidadesExtras).multiply(new BigDecimal("1.50"));
             
             precoMensal = base.add(custoExtra);
         }

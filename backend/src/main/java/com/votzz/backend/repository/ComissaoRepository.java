@@ -1,6 +1,9 @@
 package com.votzz.backend.repository;
 
 import com.votzz.backend.domain.Comissao;
+import com.votzz.backend.domain.StatusComissao;
+import com.votzz.backend.dto.TopAfiliadoDTO;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
@@ -14,20 +17,25 @@ import java.util.UUID;
 @Repository
 public interface ComissaoRepository extends JpaRepository<Comissao, UUID> {
 
-    // Lista comissões pendentes de pagamento (para o Cron Job)
+    /**
+     * Busca comissões que estão BLOQUEADAS mas já venceram o prazo (dataLiberacao <= hoje).
+     * Usado para mover de BLOQUEADO -> DISPONIVEL.
+     */
     @Query("SELECT c FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'BLOQUEADO' AND c.dataLiberacao <= :dataLimite")
-    List<Comissao> findLiberadasParaSaque(@Param("afiliadoId") UUID afiliadoId, @Param("dataLimite") LocalDate dataLimite);
+    List<Comissao> findMatureCommissions(@Param("afiliadoId") UUID afiliadoId, @Param("dataLimite") LocalDate dataLimite);
 
-    // Soma saldo disponível (Real)
+    /**
+     * Busca comissões DISPONÍVEIS para serem pagas (marcadas como PAGO).
+     */
+    List<Comissao> findByAfiliadoIdAndStatus(UUID afiliadoId, StatusComissao status);
+
     @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'DISPONIVEL'")
     BigDecimal sumSaldoDisponivel(@Param("afiliadoId") UUID afiliadoId);
 
-    // Soma saldo futuro (Bloqueado)
     @Query("SELECT COALESCE(SUM(c.valor), 0) FROM Comissao c WHERE c.afiliado.id = :afiliadoId AND c.status = 'BLOQUEADO'")
     BigDecimal sumSaldoFuturo(@Param("afiliadoId") UUID afiliadoId);
     
-    // Para o Dashboard Admin (Top Performers)
     @Query("SELECT new com.votzz.backend.dto.TopAfiliadoDTO(c.afiliado.user.nome, SUM(c.valor)) " +
            "FROM Comissao c GROUP BY c.afiliado.user.nome ORDER BY SUM(c.valor) DESC")
-    List<com.votzz.backend.dto.TopAfiliadoDTO> findTopPerformers(org.springframework.data.domain.Pageable pageable);
+    List<TopAfiliadoDTO> findTopPerformers(Pageable pageable);
 }

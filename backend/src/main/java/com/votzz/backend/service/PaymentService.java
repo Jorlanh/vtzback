@@ -1,6 +1,9 @@
 package com.votzz.backend.service;
 
+import com.votzz.backend.domain.Comissao;
+import com.votzz.backend.domain.StatusComissao;
 import com.votzz.backend.domain.Tenant;
+import com.votzz.backend.repository.ComissaoRepository;
 import com.votzz.backend.repository.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -12,6 +15,7 @@ import java.time.LocalDate;
 public class PaymentService {
 
     private final TenantRepository tenantRepository;
+    private final ComissaoRepository comissaoRepository;
 
     /**
      * Cálculo Server-Side (Anti-Hacker): 
@@ -19,17 +23,17 @@ public class PaymentService {
      */
     public BigDecimal calculateCustomPlanPrice(int units, String frequency) {
         // Lógica: Se units <= 80, é preço de Business. Se > 80, é Custom.
-        // Base Business = 490.00 (até 80 unidades)
+        // Base Business = 349.00 (até 80 unidades)
         
         int billingUnits = Math.max(units, 80); 
         
-        BigDecimal baseValue = new BigDecimal("490.00");
+        BigDecimal baseValue = new BigDecimal("349.00");
         BigDecimal perUnitValue = new BigDecimal("1.50");
         
         // Calcula unidades extras
         BigDecimal extraUnits = new BigDecimal(billingUnits - 80);
         
-        // Total Mensal = 490 + (Extras * 1.50)
+        // Total Mensal = 349 + (Extras * 1.50)
         BigDecimal totalMonthly = baseValue.add(perUnitValue.multiply(extraUnits));
 
         if ("ANUAL".equalsIgnoreCase(frequency)) {
@@ -54,5 +58,24 @@ public class PaymentService {
         tenant.setStatusAssinatura("ACTIVE");
         tenant.setAtivo(true);
         tenantRepository.save(tenant);
+
+        // --- LÓGICA DE COMISSÃO DE AFILIADO (30%) ---
+        if (tenant.getAfiliado() != null && tenant.getPlano() != null) {
+            BigDecimal valorBase = tenant.getPlano().getPrecoBase();
+            
+            // Calcula 30% de comissão
+            BigDecimal valorComissao = valorBase.multiply(new BigDecimal("0.30"));
+
+            Comissao comissao = Comissao.builder()
+                .afiliado(tenant.getAfiliado())
+                .condominioPagante(tenant)
+                .valor(valorComissao)
+                .dataVenda(today)
+                .dataLiberacao(today.plusDays(30)) // Libera saque em 30 dias (garantia)
+                .status(StatusComissao.BLOQUEADO) // CORRIGIDO: Status inicial é BLOQUEADO
+                .build();
+
+            comissaoRepository.save(comissao);
+        }
     }
 }

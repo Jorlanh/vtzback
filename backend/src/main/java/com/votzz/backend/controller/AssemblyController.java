@@ -29,7 +29,6 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/assemblies")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*") 
 public class AssemblyController {
 
     private static final Logger logger = LoggerFactory.getLogger(AssemblyController.class);
@@ -43,10 +42,7 @@ public class AssemblyController {
     @GetMapping
     public ResponseEntity<?> getAll(@AuthenticationPrincipal User currentUser) {
         try {
-            if (currentUser == null) {
-                logger.warn("Tentativa de acesso sem usuário autenticado.");
-                return ResponseEntity.status(401).body("Não autorizado");
-            }
+            if (currentUser == null) return ResponseEntity.status(401).body("Não autorizado");
 
             if (currentUser.getRole() != null && currentUser.getRole().name().equals("ADMIN")) {
                 return ResponseEntity.ok(assemblyRepository.findAll());
@@ -58,11 +54,9 @@ public class AssemblyController {
             }
 
             if (tenantId == null) {
-                logger.error("ERRO 400: Tenant ID não encontrado para o usuário: {}", currentUser.getEmail());
-                return ResponseEntity.badRequest().body(Map.of("error", "Condomínio não identificado. Faça login novamente."));
+                return ResponseEntity.badRequest().body(Map.of("error", "Condomínio não identificado."));
             }
 
-            logger.info("Listando assembleias para o Tenant: {}", tenantId);
             List<Assembly> lista = assemblyRepository.findByTenantId(tenantId);
             return ResponseEntity.ok(lista);
 
@@ -112,6 +106,7 @@ public class AssemblyController {
             Assembly saved = assemblyRepository.save(assembly);
             auditService.log(currentUser, targetTenant, "CRIAR_ASSEMBLEIA", "Criou a assembleia: " + saved.getTitulo(), "ASSEMBLEIA");
 
+            // Notificação automática na criação
             try {
                 List<User> residents = userRepository.findByTenantId(tenantId);
                 List<String> emails = residents.stream()
@@ -121,11 +116,19 @@ public class AssemblyController {
 
                 if (!emails.isEmpty()) {
                     DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
-                    String dataFormatada = saved.getDataInicio().format(formatter);
-                    emailService.sendNewAssemblyNotification(emails, saved.getTitulo(), dataFormatada);
+                    String inicio = saved.getDataInicio().format(formatter);
+                    String fim = saved.getDataFim() != null ? saved.getDataFim().format(formatter) : "Indefinido";
+                    String periodo = "De " + inicio + " até " + fim;
+                    
+                    String link = "https://www.votzz.com.br/#/voting-room/" + saved.getId();
+                    
+                    // Pega o nome do Tenant se estiver carregado, ou usa padrão
+                    String tName = currentUser.getTenant() != null ? currentUser.getTenant().getNome() : "Condomínio";
+                    
+                    emailService.sendNewAssemblyNotification(emails, saved.getTitulo(), saved.getDescription(), periodo, link, tName);
                 }
             } catch (Exception e) {
-                logger.error("Falha ao processar notificações por e-mail: {}", e.getMessage());
+                logger.error("Falha ao processar notificações automáticas: {}", e.getMessage());
             }
             
             return ResponseEntity.ok(saved);
@@ -142,9 +145,6 @@ public class AssemblyController {
                 .orElse(ResponseEntity.notFound().build());
     }
 
-    /**
-     * ENDPOINT PARA EDITAR ASSEMBLEIA (Resolve o erro 500 no PUT)
-     */
     @PutMapping("/{id}")
     @Transactional
     public ResponseEntity<?> atualizarAssembleia(@PathVariable UUID id, @RequestBody Assembly updatedAssembly, @AuthenticationPrincipal User currentUser) {
@@ -170,9 +170,6 @@ public class AssemblyController {
         }
     }
 
-    /**
-     * ENDPOINT PARA EXCLUIR ASSEMBLEIA (Resolve o erro 500 no DELETE)
-     */
     @DeleteMapping("/{id}")
     @Transactional
     public ResponseEntity<?> excluirAssembleia(@PathVariable UUID id, @AuthenticationPrincipal User currentUser) {
@@ -186,6 +183,75 @@ public class AssemblyController {
         } catch (Exception e) {
             logger.error("Erro ao excluir assembleia: ", e);
             return ResponseEntity.status(500).body(Map.of("error", "Erro interno ao excluir assembleia."));
+        }
+    }
+
+    // --- NOTIFICAÇÃO MANUAL (BOTÃO DE EMAIL) ---
+    @PostMapping("/{id}/notify")
+    public ResponseEntity<?> notificarMoradores(@PathVariable UUID id, @AuthenticationPrincipal User currentUser) {
+        try {
+            Assembly assembly = assemblyRepository.findById(id)
+                    .orElseThrow(() -> new RuntimeException("Assembleia não encontrada"));
+
+            UUID userTenantId = null;
+            if (currentUser.getTenant() != null) userTenantId = currentUser.getTenant().getId();
+            else if (currentUser.getTenants() != null && !currentUser.getTenants().isEmpty()) userTenantId = currentUser.getTenants().get(0).getId();
+
+            if (userTenantId == null || (assembly.getTenant() != null && !userTenantId.equals(assembly.getTenant().getId()))) {
+                return ResponseEntity.status(403).body("Permissão negada.");
+            }
+
+            List<User> residents = userRepository.findByTenantId(assembly.getTenant().getId());
+            
+            List<String> recipients = residents.stream()
+                    .map(User::getEmail)
+                    .filter(email -> email != null && !email.isEmpty() && email.contains("@"))
+                    .collect(Collectors.toList());
+
+            if (recipients.isEmpty()) {
+                return ResponseEntity.badRequest().body("Nenhum morador com e-mail encontrado.");
+            }
+
+            // --- FORMATAÇÃO ---
+            DateTimeFormatter formatter = DateTimeFormatter.ofPattern("dd/MM/yyyy HH:mm");
+            
+            String inicio = assembly.getDataInicio() != null 
+                    ? assembly.getDataInicio().format(formatter) 
+                    : "A definir";
+            
+            String fim = assembly.getDataFim() != null 
+                    ? assembly.getDataFim().format(formatter) 
+                    : "Indefinido";
+
+            String periodoCompleto = String.format("De %s até %s", inicio, fim);
+
+            // Link Oficial
+            String link = "https://www.votzz.com.br/#/voting-room/" + assembly.getId();
+
+            // Nome do Condomínio
+            String tenantName = assembly.getTenant() != null ? assembly.getTenant().getNome() : "Seu Condomínio";
+
+            // Chama o EmailService com os novos parâmetros
+            emailService.sendNewAssemblyNotification(
+                recipients, 
+                assembly.getTitulo(), 
+                assembly.getDescription(), 
+                periodoCompleto, 
+                link, 
+                tenantName // <--- Passando o nome
+            );
+
+            auditService.log(currentUser, assembly.getTenant(), "NOTIFICAR_ASSEMBLEIA", 
+                "Disparou notificação por e-mail para " + recipients.size() + " moradores.", "ASSEMBLEIA");
+
+            return ResponseEntity.ok(Map.of(
+                "message", "Disparo iniciado para " + recipients.size() + " moradores.",
+                "count", recipients.size()
+            ));
+
+        } catch (Exception e) {
+            logger.error("Erro ao notificar moradores: ", e);
+            return ResponseEntity.internalServerError().body("Erro ao processar envio: " + e.getMessage());
         }
     }
 

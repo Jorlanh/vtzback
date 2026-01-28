@@ -19,7 +19,7 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     Optional<User> findByEmailOrCpf(String email, String cpf);
     Optional<User> findByEmail(String email);
     
-    // MÉTODO PARA BUSCAR TODOS OS PERFIS DO USUÁRIO SEM QUEBRAR O FILTRO
+    // Busca todos os perfis do usuário (Login)
     List<User> findByEmailIgnoreCase(String email);
     
     Optional<User> findByCpf(String cpf);
@@ -28,7 +28,13 @@ public interface UserRepository extends JpaRepository<User, UUID> {
     boolean existsByCpf(String cpf);
 
     List<User> findAllByEmailOrCpf(String email, String cpf);
-    List<User> findByTenantId(UUID tenantId);
+
+    // --- ALTERAÇÃO IMPORTANTE AQUI ---
+    // Substituímos o método simples por uma Query que olha as duas tabelas.
+    // Isso garante que Síndicos Profissionais (Multi-Tenant) e Moradores Comuns sejam encontrados.
+    @Query("SELECT DISTINCT u FROM User u LEFT JOIN u.tenants t WHERE u.tenant.id = :tenantId OR t.id = :tenantId")
+    List<User> findByTenantId(@Param("tenantId") UUID tenantId);
+
     long countByTenantId(UUID tenantId);
 
     @Modifying

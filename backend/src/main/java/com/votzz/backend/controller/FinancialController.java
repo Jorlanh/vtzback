@@ -24,7 +24,7 @@ import java.util.stream.Collectors;
 @RestController
 @RequestMapping("/api/financial")
 @RequiredArgsConstructor
-@CrossOrigin(origins = "*")
+// @CrossOrigin removido para evitar conflito com SecurityConfig
 public class FinancialController {
 
     private final CondoFinancialRepository financialRepository;
@@ -34,19 +34,22 @@ public class FinancialController {
     // --- SALDO ---
     @GetMapping("/balance")
     public ResponseEntity<CondoFinancial> getBalance(@AuthenticationPrincipal User user) {
-        UUID tenantId = TenantContext.getCurrentTenant();
+        System.out.println(">>> GET /api/financial/balance - Iniciando...");
+        
+        UUID tenantId = resolveTenantId(user);
         
         if (tenantId == null) {
-            // Se por algum motivo o contexto não foi setado, usa o tenant do usuário como fallback
-            if (user.getTenant() == null) {
-                return ResponseEntity.ok(new CondoFinancial());
-            }
-            tenantId = user.getTenant().getId();
+            System.out.println("ERRO: Tenant ID nulo. Retornando objeto vazio.");
+            return ResponseEntity.ok(new CondoFinancial());
         }
 
+        System.out.println("Buscando financeiro para Tenant: " + tenantId);
         return financialRepository.findByTenantId(tenantId)
                 .map(ResponseEntity::ok)
-                .orElseGet(() -> ResponseEntity.ok(new CondoFinancial()));
+                .orElseGet(() -> {
+                    System.out.println("Nenhum registro encontrado. Retornando novo.");
+                    return ResponseEntity.ok(new CondoFinancial());
+                });
     }
 
     @PostMapping("/update")
@@ -55,18 +58,18 @@ public class FinancialController {
             @RequestBody Map<String, BigDecimal> payload,
             @AuthenticationPrincipal User user) {
 
-        UUID tenantId = TenantContext.getCurrentTenant();
+        System.out.println(">>> POST /api/financial/update - Iniciando...");
+        UUID tenantId = resolveTenantId(user);
+
         if (tenantId == null) {
-            if (user.getTenant() == null) {
-                return ResponseEntity.status(403).body(null);
-            }
-            tenantId = user.getTenant().getId();
+            System.out.println("ERRO: Tenant não identificado. Acesso negado.");
+            return ResponseEntity.status(403).build();
         }
 
         CondoFinancial fin = financialRepository.findByTenantId(tenantId)
                 .orElseGet(() -> {
                     CondoFinancial newFin = new CondoFinancial();
-                    newFin.setTenant(user.getTenant()); // só cria se não existir
+                    newFin.setTenant(user.getTenant()); 
                     return newFin;
                 });
 
@@ -80,11 +83,8 @@ public class FinancialController {
     // --- RELATÓRIOS ---
     @GetMapping("/reports")
     public ResponseEntity<List<ReportDTO>> listReports(@AuthenticationPrincipal User user) {
-        UUID tenantId = TenantContext.getCurrentTenant();
-        
-        if (tenantId == null) {
-            tenantId = user.getTenant() != null ? user.getTenant().getId() : null;
-        }
+        System.out.println(">>> GET /api/financial/reports - Iniciando...");
+        UUID tenantId = resolveTenantId(user);
 
         if (tenantId == null) {
             return ResponseEntity.ok(List.of());
@@ -108,19 +108,16 @@ public class FinancialController {
             @RequestParam("year") int year,
             @AuthenticationPrincipal User user) {
 
-        UUID tenantId = TenantContext.getCurrentTenant();
+        UUID tenantId = resolveTenantId(user);
         if (tenantId == null) {
-            if (user.getTenant() == null) {
-                return ResponseEntity.badRequest().body("Usuário sem condomínio associado.");
-            }
-            tenantId = user.getTenant().getId();
+            return ResponseEntity.badRequest().body("Usuário sem condomínio associado.");
         }
 
         try {
             String fileUrl = fileStorageService.uploadFile(file);
 
             FinancialReport report = new FinancialReport();
-            report.setTenant(user.getTenant()); // mantém vínculo direto com entity
+            report.setTenant(user.getTenant());
             report.setMonth(month);
             report.setYear(year);
             report.setFileName(file.getOriginalFilename());
@@ -133,6 +130,23 @@ public class FinancialController {
             e.printStackTrace();
             return ResponseEntity.internalServerError().body("Erro ao salvar relatório: " + e.getMessage());
         }
+    }
+
+    // Método auxiliar para resolver o ID do Tenant com segurança
+    private UUID resolveTenantId(User user) {
+        // 1. Tenta pegar do contexto (Header X-Tenant-ID processado pelo filtro)
+        UUID contextId = TenantContext.getCurrentTenant();
+        if (contextId != null) return contextId;
+
+        // 2. Fallback: Tenta pegar do usuário logado (Campo único)
+        if (user.getTenant() != null) return user.getTenant().getId();
+
+        // 3. Fallback: Tenta pegar da lista de tenants
+        if (user.getTenants() != null && !user.getTenants().isEmpty()) {
+            return user.getTenants().get(0).getId();
+        }
+
+        return null;
     }
 
     public record ReportDTO(String id, String month, int year, String fileName, String url) {}

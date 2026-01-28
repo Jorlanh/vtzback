@@ -29,25 +29,27 @@ public class AffiliateService {
 
     @Transactional(readOnly = true)
     public DashboardDTO getDashboard(User user) {
-        // Busca o afiliado vinculado ao usuário logado
         Afiliado afiliado = afiliadoRepository.findByUser(user)
             .orElseThrow(() -> new RuntimeException("Conta de afiliado não encontrada."));
 
         UUID afiliadoId = afiliado.getId();
 
-        // [CORREÇÃO] Tratamento de nulos caso não haja comissões ainda
         BigDecimal disponivel = comissaoRepository.sumSaldoDisponivel(afiliadoId);
         if (disponivel == null) disponivel = BigDecimal.ZERO;
 
         BigDecimal futuro = comissaoRepository.sumSaldoFuturo(afiliadoId);
         if (futuro == null) futuro = BigDecimal.ZERO;
         
-        // Se usar link em produção, alterar para o domínio real
         String link = "https://votzz.com/register-condo?ref=" + afiliado.getCodigoRef();
 
         return new DashboardDTO(disponivel, futuro, link);
     }
 
+    /**
+     * Rotina diária:
+     * 1. Libera comissões maduras (BLOQUEADO -> DISPONIVEL)
+     * 2. Paga saldos disponíveis (DISPONIVEL -> PAGO)
+     */
     @Scheduled(cron = "0 0 8 * * *")
     @Transactional
     public void processarPagamentosAutomaticos() {
@@ -55,15 +57,25 @@ public class AffiliateService {
         List<Afiliado> afiliados = afiliadoRepository.findAll();
 
         for (Afiliado af : afiliados) {
+            // PASSO 1: Liberar saldo maduro
+            liberarSaldoMaduro(af.getId());
+
+            // PASSO 2: Verificar saldo disponível para saque
             BigDecimal saldoDisponivel = comissaoRepository.sumSaldoDisponivel(af.getId());
             if (saldoDisponivel == null) saldoDisponivel = BigDecimal.ZERO;
 
+            // Se saldo > R$ 30,00, realiza PIX
             if (saldoDisponivel.compareTo(new BigDecimal("30.00")) >= 0) {
                 try {
                     log.info("Processando pagamento de R$ {} para {}", saldoDisponivel, af.getCodigoRef());
                     String transferId = asaasClient.transferirPix(af.getChavePix(), saldoDisponivel);
-                    baixarComissoesPagas(af.getId(), transferId);
-                    log.info("Pagamento realizado com sucesso! ID Asaas: {}", transferId);
+                    
+                    if (transferId != null && !transferId.startsWith("ERR")) {
+                        baixarComissoesPagas(af.getId(), transferId);
+                        log.info("Pagamento realizado com sucesso! ID Asaas: {}", transferId);
+                    } else {
+                        log.error("Erro na transferência PIX para {}", af.getCodigoRef());
+                    }
                 } catch (Exception e) {
                     log.error("Falha ao pagar afiliado {}: {}", af.getCodigoRef(), e.getMessage());
                 }
@@ -71,8 +83,18 @@ public class AffiliateService {
         }
     }
 
+    // Move de BLOQUEADO para DISPONIVEL se já passou 30 dias
+    private void liberarSaldoMaduro(UUID afiliadoId) {
+        List<Comissao> maduras = comissaoRepository.findMatureCommissions(afiliadoId, LocalDate.now());
+        for (Comissao c : maduras) {
+            c.setStatus(StatusComissao.DISPONIVEL);
+        }
+        comissaoRepository.saveAll(maduras);
+    }
+
+    // Move de DISPONIVEL para PAGO após sucesso no PIX
     private void baixarComissoesPagas(UUID afiliadoId, String transferId) {
-        List<Comissao> pagas = comissaoRepository.findLiberadasParaSaque(afiliadoId, LocalDate.now());
+        List<Comissao> pagas = comissaoRepository.findByAfiliadoIdAndStatus(afiliadoId, StatusComissao.DISPONIVEL);
         for (Comissao c : pagas) {
             c.setStatus(StatusComissao.PAGO);
             c.setAsaasTransferId(transferId);

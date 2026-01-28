@@ -49,46 +49,40 @@ public class SecurityConfig {
             .sessionManagement(session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .cors(cors -> cors.configurationSource(corsConfigurationSource()))
             .authorizeHttpRequests(auth -> auth
+                // === ROTAS PÚBLICAS ===
                 .requestMatchers(HttpMethod.OPTIONS, "/**").permitAll()
+                .requestMatchers("/api/auth/**").permitAll()
+                .requestMatchers("/api/webhooks/**").permitAll()
+                .requestMatchers("/api/tenants/public-list").permitAll()
+                .requestMatchers("/api/tenants/identifier/**").permitAll()
+                .requestMatchers("/ws-votzz/**").permitAll()
+                .requestMatchers("/h2-console/**").permitAll()
+                .requestMatchers("/error").permitAll()
 
-                // Rotas Públicas
-                .requestMatchers(
-                    "/api/auth/login",
-                    "/api/auth/register-resident",
-                    "/api/auth/register-affiliate",
-                    "/api/auth/register-condo",
-                    "/api/auth/condo-register",
-                    "/api/auth/refresh",
-                    "/api/auth/forgot-password",
-                    "/api/auth/reset-password",
-                    "/api/webhooks/**",       
-                    "/api/tenants/public-list",
-                    "/api/tenants/identifier/**", 
-                    "/ws-votzz/**",           
-                    "/h2-console/**",
-                    "/error"
-                ).permitAll()
-
-                // Rotas específicas
-                .requestMatchers(HttpMethod.GET, "/api/assemblies/*/dossier").authenticated()
-
-                // Regras por Role
-                .requestMatchers("/api/admin/**").hasAuthority("ADMIN")
-                .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
-
-                // Dashboard e Financeiro (Permite visualização para Morador e gestão para outros)
+                // === ROTAS FINANCEIRAS (Onde estava dando erro 403) ===
+                // Verifica se o usuário tem QUALQUER UMA dessas roles
                 .requestMatchers(HttpMethod.GET, "/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
                 .requestMatchers("/api/financial/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
 
-                .requestMatchers("/api/tenants/audit-logs", "/api/tenants/bank-info").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
-                .requestMatchers("/api/tenants/**").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER", "MORADOR")
+                // === ROTAS ADMINISTRATIVAS ===
+                .requestMatchers("/api/admin/**").hasAuthority("ADMIN")
+                .requestMatchers("/api/afiliado/**").hasAnyAuthority("ADMIN", "AFILIADO")
 
+                // === TENANTS E USERS ===
+                .requestMatchers("/api/tenants/audit-logs", "/api/tenants/bank-info").hasAnyAuthority("ADMIN", "SINDICO", "ADM_CONDO", "MANAGER")
+                .requestMatchers("/api/tenants/**").authenticated()
                 .requestMatchers("/api/users/**").authenticated()
+                
+                // === ASSEMBLIES E ENCOMENDAS ===
+                .requestMatchers("/api/assemblies/*/dossier").authenticated()
+                .requestMatchers("/api/orders/**").authenticated()
+
+                // === DEFAULT ===
                 .anyRequest().authenticated()
             )
             .addFilterBefore(securityFilter, UsernamePasswordAuthenticationFilter.class);
 
-        http.headers(headers -> headers.frameOptions(frame -> frame.disable()));
+        http.headers(headers -> headers.frameOptions(frame -> frame.disable())); // Para o H2 Console
 
         return http.build();
     }
@@ -96,22 +90,17 @@ public class SecurityConfig {
     @Bean
     public UrlBasedCorsConfigurationSource corsConfigurationSource() {
         CorsConfiguration config = new CorsConfiguration();
-
-        // Remove espaços em branco das origens (prevenção contra erros no application.properties)
-        List<String> cleanedOrigins = allowedOrigins.stream().map(String::trim).toList();
-        config.setAllowedOrigins(cleanedOrigins);
+        
+        // Tratamento para evitar erro se a lista vier nula ou vazia do properties
+        if (allowedOrigins != null) {
+            List<String> cleanedOrigins = allowedOrigins.stream().map(String::trim).toList();
+            config.setAllowedOrigins(cleanedOrigins);
+        } else {
+            config.setAllowedOrigins(List.of("*")); // Fallback DEV
+        }
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
-
-        // IMPORTANTE: Adicionado X-Tenant-ID para permitir a comunicação multi-condomínio
-        config.setAllowedHeaders(List.of(
-            "Authorization",
-            "Content-Type",
-            "X-Tenant-ID",
-            "X-Simulated-User",
-            "asaas-access-token"
-        ));
-
+        config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token"));
         config.setAllowCredentials(true);
         config.setMaxAge(3600L);
 
