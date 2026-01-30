@@ -19,8 +19,8 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 
 /**
- * Controlador responsável pelo gerenciamento de usuários (Moradores, Síndicos, Staff).
- * Inclui criação, edição, listagem e promoção de cargos.
+ * Controlador responsável pelo gerenciamento de usuários.
+ * ATUALIZADO: Lógica de Perfil Universal (Multi-Tenant com mesmo e-mail).
  */
 @RestController
 @RequestMapping("/api/users")
@@ -37,34 +37,41 @@ public class UserController {
     private AuditService auditService;
 
     // =================================================================================
-    // 1. CRIAR NOVO USUÁRIO (POST)
+    // 1. CRIAR NOVO USUÁRIO (POST) - CORRIGIDO PARA PERFIL UNIVERSAL
     // =================================================================================
     @PostMapping
     @Transactional
     public ResponseEntity<?> createUser(@RequestBody UserDTO data, @AuthenticationPrincipal User currentUser) {
-        // --- LOGS DE DEBUG PARA VERIFICAR DADOS CHEGANDO ---
+        // --- LOGS DE DEBUG ---
         System.out.println(">>> [POST] Criando usuário: " + data.nome());
-        System.out.println(">>> CPF: " + data.cpf());
-        System.out.println(">>> Lista de Unidades recebida: " + data.unidadesList());
+        System.out.println(">>> E-mail: " + data.email());
 
-        // 1. Validação de Segurança Básica: Quem cria deve ter um condomínio
+        // 1. Validação de Segurança Básica: Quem cria deve ter um condomínio (exceto Admin Global, mas assumimos contexto local aqui)
         if (currentUser.getTenant() == null) {
             return ResponseEntity.status(403).body("Você precisa estar vinculado a um condomínio para criar usuários.");
         }
 
-        // 2. Validação de E-mail Único
-        if (userRepository.findByEmail(data.email()).isPresent()) {
-            return ResponseEntity.badRequest().body("Erro: O e-mail informado já está cadastrado no sistema.");
+        // 2. Validação de E-mail (LÓGICA PERFIL UNIVERSAL)
+        // Buscamos todas as contas com esse e-mail no sistema inteiro
+        List<User> existingAccounts = userRepository.findByEmailIgnoreCase(data.email());
+
+        // Verificamos se JÁ existe uma conta com esse e-mail NESTE condomínio específico
+        boolean existsInCurrentTenant = existingAccounts.stream()
+                .anyMatch(u -> u.getTenant() != null && u.getTenant().getId().equals(currentUser.getTenant().getId()));
+
+        if (existsInCurrentTenant) {
+            return ResponseEntity.badRequest().body("Erro: O e-mail informado já está cadastrado neste condomínio. Utilize a edição para adicionar unidades.");
         }
 
-        // 3. Validação de CPF Único (Se informado)
+        // 3. Validação de CPF (Global por Pessoa)
+        // Se informado, o CPF deve ser único para a PESSOA, não para a conta.
+        // Se o e-mail for diferente, mas o CPF for igual, bloqueamos (uma pessoa = um CPF).
         if (data.cpf() != null && !data.cpf().isEmpty()) {
-            // Verifica se o CPF existe em qualquer usuário do sistema
-            boolean cpfExists = userRepository.findAll().stream()
-                    .anyMatch(u -> data.cpf().equals(u.getCpf()));
+            boolean cpfUsedByAnotherPerson = userRepository.findAll().stream()
+                    .anyMatch(u -> data.cpf().equals(u.getCpf()) && !u.getEmail().equalsIgnoreCase(data.email()));
             
-            if (cpfExists) {
-                return ResponseEntity.badRequest().body("Erro: Este CPF já está cadastrado para outro usuário.");
+            if (cpfUsedByAnotherPerson) {
+                return ResponseEntity.badRequest().body("Erro: Este CPF já está vinculado a um e-mail diferente.");
             }
         }
 
@@ -72,19 +79,16 @@ public class UserController {
         User newUser = new User();
         newUser.setNome(data.nome());
         newUser.setEmail(data.email());
-        newUser.setCpf(data.cpf());         
         newUser.setWhatsapp(data.whatsapp());
         
-        // Salva a unidade principal (campos legados para compatibilidade)
+        // Salva a unidade principal
         newUser.setUnidade(data.unidade());
         newUser.setBloco(data.bloco());
         
-        // --- SALVAMENTO DA LISTA DE UNIDADES ---
-        // Aqui corrigimos o problema visual: salvamos a lista completa no banco.
+        // Salva a lista de unidades
         if (data.unidadesList() != null && !data.unidadesList().isEmpty()) {
             newUser.setUnidadesList(data.unidadesList()); 
         } else {
-            // Se a lista vier vazia, mas tiver unidade única, criamos uma lista com ela
             if (data.unidade() != null && !data.unidade().isEmpty()) {
                 String unidadeFormatada = data.unidade() + (data.bloco() != null ? " - " + data.bloco() : "");
                 List<String> listaInicial = new ArrayList<>();
@@ -93,46 +97,59 @@ public class UserController {
             }
         }
 
+        // Vincula ao condomínio atual de quem está criando
         newUser.setTenant(currentUser.getTenant());
 
         // 5. Definição de Cargo (Role)
-        // Apenas Síndicos e Admins podem criar cargos elevados. Padrão é MORADOR.
         if ((currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO) && data.role() != null) {
             try {
                 Role requestedRole = Role.valueOf(data.role());
-                // Proteção: Não permite criar um ADMIN (Superuser) por esta rota
+                // Proteção: Não permite criar um ADMIN (Superuser) por esta rota local
                 if (requestedRole == Role.ADMIN) {
                     newUser.setRole(Role.MORADOR);
                 } else {
                     newUser.setRole(requestedRole);
                 }
             } catch (Exception e) {
-                // Se a role for inválida, define como morador
                 newUser.setRole(Role.MORADOR);
             }
         } else {
             newUser.setRole(Role.MORADOR);
         }
 
-        // 6. Definição de Senha
-        if (data.password() != null && !data.password().isBlank()) {
-            newUser.setPassword(passwordEncoder.encode(data.password()));
+        // 6. Definição de Senha e Sincronização (A MÁGICA DO PERFIL UNIVERSAL)
+        if (!existingAccounts.isEmpty()) {
+            // Se o usuário já existe em outro condomínio (ex: é Síndico no condomínio A e agora será Morador no B),
+            // COPIAMOS os dados sensíveis para manter o Login Universal.
+            User referenceProfile = existingAccounts.get(0);
+            
+            System.out.println(">>> Sincronizando com perfil existente (Universal Profile) ID: " + referenceProfile.getId());
+            
+            newUser.setPassword(referenceProfile.getPassword()); // Usa a mesma senha criptografada
+            newUser.setCpf(referenceProfile.getCpf());           // Usa o mesmo CPF
+            newUser.setSecret2fa(referenceProfile.getSecret2fa()); // Mantém o mesmo 2FA
+            newUser.setIs2faEnabled(referenceProfile.getIs2faEnabled());
+            
         } else {
-            // Senha padrão se não informada
-            newUser.setPassword(passwordEncoder.encode("votzz123"));
+            // É um usuário totalmente novo no sistema Votzz
+            newUser.setCpf(data.cpf()); 
+            
+            if (data.password() != null && !data.password().isBlank()) {
+                newUser.setPassword(passwordEncoder.encode(data.password()));
+            } else {
+                newUser.setPassword(passwordEncoder.encode("votzz123")); // Senha padrão
+            }
         }
 
-        // 7. Persistência no Banco de Dados
+        // 7. Persistência
         User savedUser = userRepository.save(newUser);
         
-        System.out.println(">>> Usuário salvo com ID: " + savedUser.getId());
-
         // 8. Auditoria
         auditService.log(
                 currentUser,
                 currentUser.getTenant(),
                 "CRIAR_USUARIO",
-                "Criou o usuário " + newUser.getNome() + " (Unidade Principal: " + newUser.getUnidade() + ")",
+                "Criou o usuário " + newUser.getNome() + " (Unidade: " + newUser.getUnidade() + ")",
                 "USUARIOS"
         );
 
@@ -157,10 +174,6 @@ public class UserController {
         return processUpdate(id, data, currentUser);
     }
 
-    /**
-     * Lógica central de atualização de usuário.
-     * Contém regras de permissão, atualização de campos e replicação de senha para multi-contas.
-     */
     private ResponseEntity<?> processUpdate(UUID id, UserDTO data, User currentUser) {
         Optional<User> userOptional = userRepository.findById(id);
         
@@ -171,24 +184,17 @@ public class UserController {
         User user = userOptional.get();
         StringBuilder changes = new StringBuilder();
 
-        // Regra de Proteção Global: Ninguém edita o Super Admin via API comum
         if (user.getRole() == Role.ADMIN) {
             return ResponseEntity.status(403).body("Ninguém pode alterar o Super Admin do sistema.");
         }
 
-        // -------------------------------------------------------------------------
         // VERIFICAÇÃO DE PERMISSÕES
-        // -------------------------------------------------------------------------
-        System.out.println(">>> [UPDATE] Tentativa de edição no usuário ID: " + user.getId());
-        
-        // Verifica se é auto-edição (pelo ID ou e-mail correspondente)
         boolean isEditingSelf = currentUser.getId().equals(user.getId()) ||
                 (currentUser.getEmail().equalsIgnoreCase(user.getEmail()) &&
                         (currentUser.getTenant() == null || user.getTenant() == null ||
                                 currentUser.getTenant().getId().equals(user.getTenant().getId())));
 
         if (!isEditingSelf) {
-            // Se não é ele mesmo, precisa ser Gestor do MESMO condomínio
             if (currentUser.getTenant() == null) {
                 if (currentUser.getRole() != Role.ADMIN) {
                     return ResponseEntity.status(403).body("Você precisa estar vinculado a um condomínio para editar outros usuários.");
@@ -202,30 +208,45 @@ public class UserController {
             }
         }
 
-        // -------------------------------------------------------------------------
-        // ATUALIZAÇÃO DOS CAMPOS (Se presentes no JSON)
-        // -------------------------------------------------------------------------
+        // --- ATUALIZAÇÃO DOS CAMPOS ---
 
-        // 1. E-mail
+        // 1. E-mail (Mudança de e-mail afeta o login universal)
         if (data.email() != null && !data.email().isEmpty() && !data.email().equals(user.getEmail())) {
-            // Verifica se o novo email já existe
-            if (userRepository.findByEmail(data.email()).isPresent()) {
-                return ResponseEntity.badRequest().body("O novo e-mail já está em uso por outro usuário.");
-            }
+             // Verifica se o novo e-mail já está em uso por OUTRA pessoa
+             List<User> othersWithEmail = userRepository.findByEmailIgnoreCase(data.email());
+             boolean emailTakenBySomeoneElse = othersWithEmail.stream()
+                .anyMatch(u -> !u.getId().equals(user.getId())); // Se existe registro com ID diferente
+
+             // Se for apenas outro perfil da mesma pessoa (universal), tudo bem. Mas aqui simplificamos para evitar conflito de merge.
+             // Para simplificar: Não permitimos mudar para um e-mail que já existe em outro usuário diferente.
+             // Mas permitimos mudar para um e-mail novo.
+             if (emailTakenBySomeoneElse) {
+                  // Aqui poderíamos adicionar lógica complexa de merge, mas por segurança bloqueamos duplicidade na edição
+                  return ResponseEntity.badRequest().body("O novo e-mail já está em uso.");
+             }
+             
             user.setEmail(data.email());
             changes.append("Email alterado. ");
         }
 
-        // 2. CPF (Com verificação de duplicidade)
+        // 2. CPF (Sincronizado)
         if (data.cpf() != null && !data.cpf().isEmpty() && !data.cpf().equals(user.getCpf())) {
-             boolean cpfExists = userRepository.findAll().stream()
-                    .anyMatch(u -> data.cpf().equals(u.getCpf()) && !u.getId().equals(user.getId()));
+            // Verifica duplicidade global
+            boolean cpfExists = userRepository.findAll().stream()
+                    .anyMatch(u -> data.cpf().equals(u.getCpf()) && !u.getEmail().equalsIgnoreCase(user.getEmail()));
             
             if (cpfExists) {
-                return ResponseEntity.badRequest().body("O novo CPF já está cadastrado.");
+                return ResponseEntity.badRequest().body("O novo CPF já está cadastrado em outra conta.");
             }
             user.setCpf(data.cpf());
             changes.append("CPF alterado. ");
+            
+            // Sincroniza CPF em todos os perfis desse email (Universal Profile Sync)
+            List<User> allMyProfiles = userRepository.findByEmailIgnoreCase(user.getEmail());
+            for (User p : allMyProfiles) {
+                p.setCpf(data.cpf());
+                userRepository.save(p);
+            }
         }
 
         // 3. WhatsApp
@@ -234,7 +255,7 @@ public class UserController {
             changes.append("WhatsApp alterado. ");
         }
 
-        // 4. Unidade e Bloco (Principal/Legado)
+        // 4. Unidade e Bloco
         if (data.unidade() != null && !data.unidade().equals(user.getUnidade())) {
             user.setUnidade(data.unidade());
             changes.append("Unidade Principal mudou. ");
@@ -244,14 +265,13 @@ public class UserController {
             changes.append("Bloco mudou. ");
         }
 
-        // 5. LISTA DE UNIDADES (Atualização)
+        // 5. Lista de Unidades
         if (data.unidadesList() != null) {
-            System.out.println(">>> Atualizando lista de unidades para: " + data.unidadesList());
             user.setUnidadesList(data.unidadesList());
             changes.append("Lista de Unidades atualizada. ");
         }
 
-        // 6. Role (Cargo) - Apenas Gestores podem alterar Role de terceiros
+        // 6. Role
         if (data.role() != null && (currentUser.getRole() == Role.SINDICO || currentUser.getRole() == Role.ADM_CONDO)) {
             try {
                 Role newRole = Role.valueOf(data.role());
@@ -259,46 +279,31 @@ public class UserController {
                     user.setRole(newRole);
                     changes.append("Cargo alterado para " + newRole + ". ");
                 }
-            } catch (Exception e) {
-                // Role inválida ignorada
-            }
+            } catch (Exception e) {}
         }
 
-        // -------------------------------------------------------------------------
-        // ATUALIZAÇÃO DE SENHA (Com replicação para multi-unidades via CPF)
-        // -------------------------------------------------------------------------
+        // 7. SENHA (Sincronizada Globalmente pelo E-mail)
         if (data.password() != null && !data.password().isBlank()) {
             String encodedPassword = passwordEncoder.encode(data.password());
-
-            // Se o usuário tem CPF cadastrado, tenta atualizar a senha de TODAS as unidades dele no mesmo condomínio
-            if (user.getCpf() != null && !user.getCpf().isBlank() && user.getTenant() != null) {
-                List<User> todasAsUnidades = userRepository.findAll().stream()
-                        .filter(u -> user.getCpf().equals(u.getCpf()) &&
-                                u.getTenant() != null &&
-                                u.getTenant().getId().equals(user.getTenant().getId()))
-                        .collect(Collectors.toList());
-
-                if (todasAsUnidades.isEmpty()) {
-                    // Fallback (apenas ele mesmo)
-                    user.setPassword(encodedPassword);
-                } else {
-                    for (User unidade : todasAsUnidades) {
-                        unidade.setPassword(encodedPassword);
-                        userRepository.save(unidade);
-                    }
-                }
-                changes.append("SENHA ATUALIZADA (Sincronizada em todas as contas deste CPF). ");
-            } else {
-                // Atualização simples se não tiver CPF
+            
+            // Busca TODOS os perfis com este mesmo e-mail para atualizar a senha em tudo
+            List<User> allMyProfiles = userRepository.findByEmailIgnoreCase(user.getEmail());
+            
+            if (allMyProfiles.isEmpty()) {
                 user.setPassword(encodedPassword);
-                changes.append("SENHA ALTERADA. ");
+                userRepository.save(user);
+            } else {
+                for (User p : allMyProfiles) {
+                    p.setPassword(encodedPassword);
+                    userRepository.save(p);
+                }
             }
+            changes.append("SENHA ATUALIZADA (Sincronizada em todos os perfis). ");
+        } else {
+            // Se não mudou senha, salva apenas as outras alterações
+            userRepository.save(user);
         }
 
-        // Salva as alterações
-        userRepository.save(user);
-
-        // Log de Auditoria
         if (changes.length() > 0) {
             auditService.log(
                     currentUser,
@@ -317,25 +322,21 @@ public class UserController {
     // =================================================================================
     @GetMapping
     public ResponseEntity<List<User>> listAll(@AuthenticationPrincipal User currentUser) {
-        // Se usuário não tem tenant (ex: erro de cadastro ou admin global)
         if (currentUser.getTenant() == null) {
             if (currentUser.getRole() == Role.ADMIN) {
-                // Admin global vê tudo
+                // Admin Global vê tudo
                 return ResponseEntity.ok(userRepository.findAll());
             }
             return ResponseEntity.ok(List.of());
         }
 
-        // Filtra apenas usuários do mesmo condomínio (Tenant Isolation)
-        List<User> users = userRepository.findAll().stream()
-                .filter(u -> u.getTenant() != null && u.getTenant().getId().equals(currentUser.getTenant().getId()))
-                .collect(Collectors.toList());
-        
+        // Lista apenas usuários DESTE condomínio
+        List<User> users = userRepository.findByTenantId(currentUser.getTenant().getId());
         return ResponseEntity.ok(users);
     }
 
     // =================================================================================
-    // 5. PROMOVER USUÁRIO (Endpoint Rápido)
+    // 5. PROMOVER USUÁRIO
     // =================================================================================
     @PatchMapping("/{id}/role")
     @Transactional
@@ -343,7 +344,6 @@ public class UserController {
         User user = userRepository.findById(id).orElseThrow();
         String newRoleStr = payload.get("role");
 
-        // Permite promover apenas para níveis intermediários
         if ("MANAGER".equals(newRoleStr) || "ADM_CONDO".equals(newRoleStr)) {
             user.setRole(Role.ADM_CONDO);
             userRepository.save(user);
@@ -361,10 +361,7 @@ public class UserController {
         return ResponseEntity.badRequest().build();
     }
 
-    // =================================================================================
-    // DTO (Data Transfer Object)
-    // =================================================================================
-    // Importante: O campo 'unidadesList' deve corresponder ao JSON enviado pelo Frontend
+    // DTO
     public record UserDTO(
         String nome, 
         String email, 
@@ -372,7 +369,7 @@ public class UserController {
         String whatsapp, 
         String unidade, 
         String bloco, 
-        List<String> unidadesList, // <--- CAMPO ESSENCIAL PARA O ARRAY DE UNIDADES
+        List<String> unidadesList, 
         String role, 
         String password
     ) {}

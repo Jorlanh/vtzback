@@ -20,13 +20,19 @@ public class CondoDashboardController {
 
     @GetMapping("/stats")
     public ResponseEntity<AdminDashboardStats> getStats(@AuthenticationPrincipal User currentUser) {
+        // Tenta pegar o Tenant do contexto (Interceptor)
         UUID tenantId = TenantContext.getCurrentTenant();
+        
+        // Fallback: Se não vier no header, pega do usuário logado (IMPORTANTE PARA MORADORES)
         if (tenantId == null && currentUser != null && currentUser.getTenant() != null) {
             tenantId = currentUser.getTenant().getId();
         }
         
-        if (tenantId == null) return ResponseEntity.badRequest().build();
+        if (tenantId == null) {
+            return ResponseEntity.badRequest().build();
+        }
         
+        // O Service agora retorna TUDO (Saldo + Usuários), sem distinção de cargo
         return ResponseEntity.ok(dashboardService.getCondoStats(tenantId));
     }
 }

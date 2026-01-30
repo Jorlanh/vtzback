@@ -1,5 +1,6 @@
 package com.votzz.backend.service;
 
+import jakarta.annotation.PostConstruct;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -10,15 +11,12 @@ import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.PutObjectRequest;
 
-import jakarta.annotation.PostConstruct;
 import java.io.IOException;
 import java.util.UUID;
 
 @Service
 public class FileStorageService {
 
-    // --- CORREÇÃO: Mapeando exatamente as chaves do seu application.properties ---
-    
     @Value("${spring.cloud.aws.credentials.access-key}")
     private String accessKey;
 
@@ -35,7 +33,7 @@ public class FileStorageService {
 
     @PostConstruct
     public void init() {
-        // Inicializa o cliente S3
+        // Inicializa o cliente S3 manualmente para evitar conflito de Beans
         this.s3Client = S3Client.builder()
                 .region(Region.of(region))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
@@ -43,20 +41,21 @@ public class FileStorageService {
     }
 
     public String uploadFile(MultipartFile file) throws IOException {
-        // Gera um nome único
-        String fileName = "areas/" + UUID.randomUUID() + "_" + file.getOriginalFilename();
+        // Gera nome único
+        String fileName = "areas/" + UUID.randomUUID() + "_" + file.getOriginalFilename().replaceAll("\\s+", "_");
 
+        // Configura o envio (SEM ACL, pois o bucket é Owner Enforced)
         PutObjectRequest putOb = PutObjectRequest.builder()
                 .bucket(bucketName)
                 .key(fileName)
                 .contentType(file.getContentType())
-                .acl("public-read") // Torna público
+                // .acl("public-read") <-- REMOVIDO: Isso causava erro 400/500 na AWS moderna
                 .build();
 
-        // Envia para a AWS (Vai falhar aqui se a chave for 'fake-key')
+        // Envia
         s3Client.putObject(putOb, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
 
-        // Retorna a URL pública
+        // Retorna URL Pública
         return String.format("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, fileName);
     }
 }

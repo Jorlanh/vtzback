@@ -17,12 +17,13 @@ public interface TenantRepository extends JpaRepository<Tenant, UUID> {
 
     List<Tenant> findByAtivoTrue();
 
-    Tenant findByAsaasCustomerId(String asaasCustomerId);
+    // [CORRIGIDO] Retorna Optional para evitar erro se não encontrar
+    Optional<Tenant> findByAsaasCustomerId(String asaasCustomerId);
 
-    // [ADICIONADO] Este método faltava para calcular o MRR no Dashboard
+    // Método para calcular MRR no Dashboard
     List<Tenant> findByStatusAssinatura(String statusAssinatura);
 
-    // [ADICIONADO] Útil para validações de unicidade no cadastro manual
+    // Validações de unicidade no cadastro manual
     Optional<Tenant> findByCnpj(String cnpj);
 
     // Busca flexível por CNPJ ou Nome (Case insensitive)

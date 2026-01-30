@@ -50,11 +50,10 @@ public class Tenant {
     @Column(name = "blocos_total")
     private Integer blocos;
 
-    // CORREÇÃO AQUI: Ignora as propriedades do Proxy do Hibernate
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "plano_id")
     @JsonIgnoreProperties({"hibernateLazyInitializer", "handler"}) 
-    @JsonIgnore  // <--- ADICIONE ISSO AQUI
+    @JsonIgnore
     private Plano plano;
 
     @ManyToOne(fetch = FetchType.LAZY)
@@ -118,5 +117,22 @@ public class Tenant {
         }
         this.ativo = true;
         this.statusAssinatura = "ACTIVE";
+    }
+
+    // --- LÓGICA DE TRAVA DE PAGAMENTO ---
+
+    /**
+     * Retorna TRUE se passou de 3 dias do vencimento.
+     * É aqui que a trava ativa.
+     */
+    @JsonIgnore
+    public boolean isBloqueadoPorPagamento() {
+        if (this.dataExpiracaoPlano == null) return false; 
+        
+        // Data Limite = Vencimento + 3 dias de tolerância
+        LocalDate dataLimiteBloqueio = this.dataExpiracaoPlano.plusDays(3);
+        
+        // Se hoje for DEPOIS da data limite, está bloqueado.
+        return LocalDate.now().isAfter(dataLimiteBloqueio);
     }
 }
