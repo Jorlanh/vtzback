@@ -4,7 +4,8 @@ import com.votzz.backend.domain.TenantPaymentConfig;
 import com.votzz.backend.domain.User;
 import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.repository.TenantPaymentConfigRepository;
-import org.springframework.beans.factory.annotation.Autowired;
+import com.votzz.backend.service.AuditService; // Import da Auditoria
+import lombok.RequiredArgsConstructor; // Lombok para injeção limpa
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.transaction.annotation.Transactional;
@@ -12,10 +13,11 @@ import org.springframework.web.bind.annotation.*;
 
 @RestController
 @RequestMapping("/api/tenants/payment-config")
+@RequiredArgsConstructor // Injeta repositório e auditService automaticamente
 public class TenantPaymentConfigController {
 
-    @Autowired
-    private TenantPaymentConfigRepository configRepository;
+    private final TenantPaymentConfigRepository configRepository;
+    private final AuditService auditService; // Serviço de Auditoria
 
     @GetMapping
     public ResponseEntity<TenantPaymentConfig> getConfig(@AuthenticationPrincipal User currentUser) {
@@ -24,13 +26,10 @@ public class TenantPaymentConfigController {
         return configRepository.findByTenantId(currentUser.getTenant().getId())
                 .map(ResponseEntity::ok)
                 .orElseGet(() -> {
-                    // RETORNO PADRÃO SEGURO:
-                    // Retorna um objeto JSON com configurações padrão sem salvar no banco ainda.
-                    // Isso evita o erro 500.
+                    // Retorna padrão se não existir
                     TenantPaymentConfig defaultConfig = new TenantPaymentConfig();
-                    defaultConfig.setEnableManualPix(true); // Padrão: Pix Manual ativo
+                    defaultConfig.setEnableManualPix(true);
                     defaultConfig.setEnableAsaas(false);
-                    // Não definimos o 'tenant' aqui para evitar recursão infinita no JSON se não configurado
                     return ResponseEntity.ok(defaultConfig);
                 });
     }
@@ -40,15 +39,14 @@ public class TenantPaymentConfigController {
     public ResponseEntity<?> saveConfig(@RequestBody TenantPaymentConfig dto, @AuthenticationPrincipal User currentUser) {
         if (currentUser.getTenant() == null) return ResponseEntity.badRequest().build();
         
-        // Apenas Síndico, Admin ou Gerente pode alterar
+        // Segurança: Apenas Síndico ou Admin
         if (currentUser.getRole() != Role.SINDICO && currentUser.getRole() != Role.ADM_CONDO && currentUser.getRole() != Role.MANAGER) {
-            return ResponseEntity.status(403).body("Acesso negado.");
+            return ResponseEntity.status(403).body("Acesso negado. Apenas síndicos podem alterar dados financeiros.");
         }
 
         TenantPaymentConfig config = configRepository.findByTenantId(currentUser.getTenant().getId())
                 .orElse(new TenantPaymentConfig());
 
-        // Vincula ao condomínio do usuário logado
         config.setTenant(currentUser.getTenant());
         
         // Atualiza campos
@@ -60,10 +58,22 @@ public class TenantPaymentConfigController {
         config.setPixKey(dto.getPixKey());
         config.setInstructions(dto.getInstructions());
         
-        // Se tiver campos do Asaas (API Key), salvar também
-        // config.setAsaasApiKey(dto.getAsaasApiKey());
+        // Salva a chave do Asaas se fornecida
+        if (dto.getAsaasAccessToken() != null && !dto.getAsaasAccessToken().isEmpty()) {
+            config.setAsaasAccessToken(dto.getAsaasAccessToken());
+        }
 
         configRepository.save(config);
+
+        // --- AUDITORIA DE SEGURANÇA ---
+        auditService.log(
+            currentUser, 
+            currentUser.getTenant(), 
+            "ATUALIZAR_FINANCEIRO", 
+            "Alterou configurações de recebimento (Asaas/Pix Manual).", 
+            "FINANCEIRO"
+        );
+
         return ResponseEntity.ok("Configurações de pagamento salvas com sucesso.");
     }
 }
