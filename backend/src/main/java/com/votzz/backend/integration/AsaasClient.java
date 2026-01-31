@@ -23,8 +23,9 @@ public class AsaasClient {
     @Value("${asaas.api.url}")
     private String apiUrl;
 
+    // CHAVE MESTRA (Sua conta Votzz - Usada para Planos e Afiliados)
     @Value("${asaas.api.key}")
-    private String apiKey;
+    private String masterApiKey;
 
     private final RestClient.Builder restClientBuilder;
 
@@ -32,17 +33,32 @@ public class AsaasClient {
         return restClientBuilder.build();
     }
 
-    private HttpHeaders getHeaders() {
+    // --- HELPER DE CABEÇALHOS INTELIGENTE ---
+    // Se tenantKey for nulo, usa a masterApiKey.
+    private HttpHeaders getHeaders(String tenantKey) {
         HttpHeaders headers = new HttpHeaders();
-        headers.set("access_token", apiKey);
+        // Lógica Híbrida: Prioriza a chave do condomínio, senão usa a Mestra
+        String tokenToUse = (tenantKey != null && !tenantKey.isBlank()) ? tenantKey : masterApiKey;
+        
+        headers.set("access_token", tokenToUse);
         headers.setContentType(MediaType.APPLICATION_JSON);
         headers.set("User-Agent", "Votzz-System");
         return headers;
     }
 
-    // --- MÉTODOS ---
+    // ==================================================================================
+    // MÉTODOS PÚBLICOS (SOBRECARGA PARA MULTI-TENANT)
+    // ==================================================================================
 
+    // 1. CRIAR CLIENTE (CUSTOMER)
+
+    // Padrão (Usa Mestra - Para Assinaturas da Plataforma)
     public String createCustomer(String name, String cpfCnpj, String email, String mobilePhone) {
+        return createCustomer(name, cpfCnpj, email, mobilePhone, null);
+    }
+
+    // Multi-Tenant (Usa Chave do Condomínio - Para Reservas de Área)
+    public String createCustomer(String name, String cpfCnpj, String email, String mobilePhone, String tenantApiKey) {
         String cleanCpf = cpfCnpj != null ? cpfCnpj.replaceAll("\\D", "") : "";
         Map<String, String> body = new HashMap<>();
         body.put("name", name);
@@ -56,7 +72,7 @@ public class AsaasClient {
         try {
             Map response = getClient().post()
                 .uri(apiUrl + "/customers")
-                .headers(h -> h.addAll(getHeaders()))
+                .headers(h -> h.addAll(getHeaders(tenantApiKey))) // <--- Usa a chave dinâmica
                 .body(body)
                 .retrieve()
                 .body(Map.class);
@@ -68,7 +84,7 @@ public class AsaasClient {
             log.error("Erro API Asaas (Create Customer): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
             if (e.getResponseBodyAsString().contains("already exists")) {
                  log.info("Cliente já existe no Asaas. Buscando ID original...");
-                 return fetchCustomerIdByCpf(cleanCpf);
+                 return fetchCustomerIdByCpf(cleanCpf, tenantApiKey); // <--- Busca com a chave certa
             }
             throw new RuntimeException("Erro Asaas ao criar cliente: " + e.getResponseBodyAsString());
         } catch (Exception e) {
@@ -78,11 +94,13 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cliente Asaas (Sem ID na resposta)");
     }
 
-    private String fetchCustomerIdByCpf(String cpfCnpj) {
+    // 2. BUSCAR CLIENTE POR CPF
+
+    private String fetchCustomerIdByCpf(String cpfCnpj, String tenantApiKey) {
         try {
             Map response = getClient().get()
                 .uri(apiUrl + "/customers?cpfCnpj=" + cpfCnpj)
-                .headers(h -> h.addAll(getHeaders()))
+                .headers(h -> h.addAll(getHeaders(tenantApiKey))) // <--- Usa a chave dinâmica
                 .retrieve()
                 .body(Map.class);
 
@@ -98,22 +116,14 @@ public class AsaasClient {
         throw new RuntimeException("Cliente existe no Asaas mas não foi possível recuperar o ID.");
     }
 
-    // --- NOVO MÉTODO: Criação de Cobrança Híbrida (Link de Pagamento) ---
-    public Map<String, Object> createSubscriptionCharge(String customerId, BigDecimal value, int maxInstallmentCount) {
-        Map<String, Object> body = new HashMap<>();
-        body.put("customer", customerId);
-        // "UNDEFINED" permite que o cliente escolha Pix, Boleto ou Cartão
-        body.put("billingType", "UNDEFINED"); 
-        body.put("value", value);
-        body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
-        body.put("description", "Assinatura Votzz - Plano Custom");
-        
-        // Define o limite de parcelas
-        body.put("maxInstallmentCount", maxInstallmentCount);
+    // 3. CRIAR COBRANÇA PIX
 
-        return sendPaymentRequest(body);
+    // Padrão (Usa Mestra - Para Assinaturas Votzz)
+    public Map<String, Object> createPixCharge(String customerId, BigDecimal value) {
+        return createPixCharge(customerId, value, null, BigDecimal.ZERO);
     }
-
+    
+    // Com Split (Usa Mestra - Para Afiliados)
     public Map<String, Object> createPixCharge(String customerId, BigDecimal value, String walletIdAfiliado, BigDecimal percentualAfiliado) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
@@ -128,11 +138,36 @@ public class AsaasClient {
             splitRule.put("percent", percentualAfiliado);
             body.put("split", List.of(splitRule));
         }
-        return sendPaymentRequest(body);
+        return sendPaymentRequest(body, null); // Passa null para usar a Mestra
     }
-    
-    public Map<String, Object> createPixCharge(String customerId, BigDecimal value) {
-        return createPixCharge(customerId, value, null, BigDecimal.ZERO);
+
+    // NOVO: Multi-Tenant (Usa Chave do Condomínio - Para Reservas)
+    public Map<String, Object> createPixChargeForTenant(String customerId, BigDecimal value, String description, String tenantApiKey) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("customer", customerId);
+        body.put("billingType", "PIX");
+        body.put("value", value);
+        // Vencimento curto (1 dia) para reservas de área comum
+        body.put("dueDate", LocalDate.now().plusDays(1).format(DateTimeFormatter.ISO_DATE)); 
+        body.put("description", description);
+
+        // NÂO TEM SPLIT AQUI (O dinheiro vai todo pro condomínio, pois usamos a chave dele)
+        
+        return sendPaymentRequest(body, tenantApiKey); // <--- Chave do Condomínio
+    }
+
+    // 4. MÉTODOS DE ASSINATURA (Usa Mestra - Mantidos inalterados)
+
+    public Map<String, Object> createSubscriptionCharge(String customerId, BigDecimal value, int maxInstallmentCount) {
+        Map<String, Object> body = new HashMap<>();
+        body.put("customer", customerId);
+        body.put("billingType", "UNDEFINED"); 
+        body.put("value", value);
+        body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
+        body.put("description", "Assinatura Votzz - Plano Custom");
+        body.put("maxInstallmentCount", maxInstallmentCount);
+
+        return sendPaymentRequest(body, null); // Mestra
     }
 
     public String criarCobrancaSplit(String customerId, BigDecimal valorTotal, String walletCondominio, BigDecimal taxaVotzz, String billingType) {
@@ -153,10 +188,11 @@ public class AsaasClient {
             }
         }
 
+        // Método antigo que retorna só String, mantido para compatibilidade, usando Mestra
         try {
             Map response = getClient().post()
                 .uri(apiUrl + "/payments")
-                .headers(h -> h.addAll(getHeaders()))
+                .headers(h -> h.addAll(getHeaders(null))) // Mestra
                 .body(body)
                 .retrieve()
                 .body(Map.class);
@@ -171,11 +207,14 @@ public class AsaasClient {
         throw new RuntimeException("Falha ao criar cobrança split");
     }
 
-    private Map<String, Object> sendPaymentRequest(Map<String, Object> body) {
+    // 5. ENVIO GENÉRICO (CORAÇÃO DA MUDANÇA)
+
+    // Agora aceita apiKey opcional
+    private Map<String, Object> sendPaymentRequest(Map<String, Object> body, String specificApiKey) {
         try {
             Map payment = getClient().post()
                 .uri(apiUrl + "/payments")
-                .headers(h -> h.addAll(getHeaders()))
+                .headers(h -> h.addAll(getHeaders(specificApiKey))) // <--- Injeta a chave correta
                 .body(body)
                 .retrieve()
                 .body(Map.class);
@@ -185,24 +224,22 @@ public class AsaasClient {
                 result.put("paymentId", payment.get("id"));
                 result.put("value", body.get("value"));
                 
-                // Se for UNDEFINED (Link de Pagamento)
                 if (payment.containsKey("invoiceUrl")) {
                     result.put("invoiceUrl", payment.get("invoiceUrl"));
                 }
-                // Se for PIX direto
                 else if ("PIX".equals(body.get("billingType"))) {
-                     try {
-                         Map qrCode = getClient().get()
+                      try {
+                          Map qrCode = getClient().get()
                             .uri(apiUrl + "/payments/" + payment.get("id") + "/pixQrCode")
-                            .headers(h -> h.addAll(getHeaders()))
+                            .headers(h -> h.addAll(getHeaders(specificApiKey))) // <--- Injeta a chave correta
                             .retrieve().body(Map.class);
-                         if (qrCode != null) {
+                          if (qrCode != null) {
                              result.put("encodedImage", qrCode.get("encodedImage"));
                              result.put("payload", qrCode.get("payload"));
-                         }
-                     } catch(Exception e) {
-                         log.warn("Falha ao buscar QR Code Pix: {}", e.getMessage());
-                     }
+                          }
+                      } catch(Exception e) {
+                          log.warn("Falha ao buscar QR Code Pix: {}", e.getMessage());
+                      }
                 }
                 return result;
             }
@@ -213,6 +250,7 @@ public class AsaasClient {
         throw new RuntimeException("Erro interno ao gerar cobrança.");
     }
 
+    // 6. TRANSFERÊNCIA (Para Afiliados - Usa Mestra)
     public String transferirPix(String chavePix, BigDecimal valor) {
         Map<String, Object> body = new HashMap<>();
         body.put("value", valor);
@@ -222,7 +260,7 @@ public class AsaasClient {
         try {
             Map response = getClient().post()
                 .uri(apiUrl + "/transfers")
-                .headers(h -> h.addAll(getHeaders()))
+                .headers(h -> h.addAll(getHeaders(null))) // Mestra
                 .body(body)
                 .retrieve()
                 .body(Map.class);

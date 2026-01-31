@@ -114,7 +114,8 @@ public class FinancialController {
         }
 
         try {
-            String fileUrl = fileStorageService.uploadFile(file);
+            // CORRIGIDO: Passando a pasta "financial-reports"
+            String fileUrl = fileStorageService.uploadFile(file, "financial-reports");
 
             FinancialReport report = new FinancialReport();
             report.setTenant(user.getTenant());
