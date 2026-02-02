@@ -28,7 +28,7 @@ public class User implements UserDetails {
     @Column(nullable = false)
     private String nome;
 
-    @Column(nullable = false)
+    @Column(nullable = false, unique = true)
     private String email;
 
     @Column(nullable = false)
@@ -37,8 +37,10 @@ public class User implements UserDetails {
     @Column
     private String cpf;
 
+    // --- CONTATOS ---
     private String whatsapp;
-    
+    private String phone; // Campo adicionado para compatibilidade com o Controller
+
     // Campos legados (Mantidos para compatibilidade)
     private String unidade;
     private String bloco;
@@ -88,13 +90,20 @@ public class User implements UserDetails {
     @Column(name = "updated_at")
     private LocalDateTime updatedAt;
 
+    // --- TOKENS DE RECUPERAÇÃO ---
+    @Column(name = "reset_token")
+    private String resetToken;
+
+    @Column(name = "reset_token_expiry")
+    private LocalDateTime resetTokenExpiry;
+
     @PrePersist
     protected void onCreate() {
         if (createdAt == null) createdAt = LocalDateTime.now();
         if (updatedAt == null) updatedAt = LocalDateTime.now();
         if (is2faEnabled == null) is2faEnabled = false;
         
-        // Sincronia básica: se tiver tenant na lista mas não no singular, seta o singular (opcional)
+        // Sincronia básica: se tiver tenant na lista mas não no singular, seta o singular
         if (tenant == null && !tenants.isEmpty()) {
             tenant = tenants.get(0);
         }
@@ -137,4 +146,11 @@ public class User implements UserDetails {
     public void setIs2faEnabled(Boolean is2faEnabled) {
         this.is2faEnabled = is2faEnabled;
     }
+
+    // --- GETTERS E SETTERS MANUAIS PARA GARANTIR ---
+    public void setPhone(String phone) { this.phone = phone; }
+    public String getPhone() { return phone; }
+    
+    public void setWhatsapp(String whatsapp) { this.whatsapp = whatsapp; }
+    public String getWhatsapp() { return whatsapp; }
 }

@@ -21,11 +21,11 @@ public class CondoDashboardService {
     private final UserRepository userRepository;
     private final AssemblyRepository assemblyRepository;
     private final VoteRepository voteRepository;
-    private final CondoFinancialRepository condoFinancialRepository; // [ADICIONADO]
+    private final CondoFinancialRepository condoFinancialRepository;
+    private final BookingRepository bookingRepository; // [1] INJEÇÃO DO REPOSITÓRIO DE RESERVAS
 
     public AdminDashboardStats getCondoStats(UUID tenantId) {
         // 1. Total de Moradores
-        // [IMPORTANTE] O UserRepository.findByTenantId deve estar funcionando corretamente
         long totalUsers = userRepository.findByTenantId(tenantId).size();
         
         // 2. Usuários Online
@@ -56,18 +56,19 @@ public class CondoDashboardService {
                 .filter(a -> a.getDataFim() != null && a.getDataFim().isBefore(LocalDateTime.now().plusDays(2)))
                 .count();
 
-        // 7. [CORREÇÃO] Saldo Financeiro
+        // 7. Saldo Financeiro
         BigDecimal saldoAtual = BigDecimal.ZERO;
-        
-        // Busca o registro financeiro do condomínio
         Optional<CondoFinancial> financialOpt = condoFinancialRepository.findByTenantId(tenantId);
         
         if (financialOpt.isPresent()) {
-            // Usa .getBalance() pois o campo na entidade é 'balance'
             saldoAtual = financialOpt.get().getBalance(); 
         }
 
-        // Retorna o DTO completo, já com o saldo e número de moradores
+        // 8. [NOVO] Comprovantes Pendentes de Validação
+        // Conta quantas reservas estão com status "UNDER_ANALYSIS" neste condomínio
+        long pendingReceipts = bookingRepository.countByTenantIdAndStatus(tenantId, "UNDER_ANALYSIS");
+
+        // Retorna o DTO completo
         return new AdminDashboardStats(
             totalUsers,
             onlineUsers,
@@ -76,7 +77,8 @@ public class CondoDashboardService {
             yearlyVotes,
             attention,
             new HashMap<>(),
-            saldoAtual // Passando o saldo aqui
+            saldoAtual,
+            pendingReceipts // Passando o valor real aqui
         );
     }
 }

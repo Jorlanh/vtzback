@@ -14,7 +14,8 @@ public record AdminDashboardStats(
     long yearlyVotes,
     long attentionRequired,
     Map<String, Long> participationEvolution,
-    BigDecimal saldoAtual // [NOVO] Adicionado para o saldo aparecer
+    BigDecimal saldoAtual,
+    long pendingReceipts // [NOVO] Contador de comprovantes pendentes
 ) {
     // --- CONSTRUTOR 1: Para o AdminService (Super Admin) ---
     public AdminDashboardStats(long totalUsers, long onlineUsers, long totalTenants, long activeTenants, BigDecimal mrr) {
@@ -29,12 +30,13 @@ public record AdminDashboardStats(
             0,                  
             0,                  
             null,
-            BigDecimal.ZERO // Saldo padrão para Super Admin
+            BigDecimal.ZERO,
+            0 // pendingReceipts padrão para Super Admin
         );
     }
 
     // --- CONSTRUTOR 2: Para o CondoDashboardService (Síndicos e Moradores) ---
-    public AdminDashboardStats(long totalUsers, long onlineUsers, long activeAssemblies, BigDecimal engagement, long yearlyVotes, long attention, Map<String, Long> participationEvolution, BigDecimal saldoAtual) {
+    public AdminDashboardStats(long totalUsers, long onlineUsers, long activeAssemblies, BigDecimal engagement, long yearlyVotes, long attention, Map<String, Long> participationEvolution, BigDecimal saldoAtual, long pendingReceipts) {
         this(
             totalUsers, 
             onlineUsers, 
@@ -46,7 +48,8 @@ public record AdminDashboardStats(
             yearlyVotes, 
             attention, 
             participationEvolution,
-            saldoAtual // Recebe o saldo real do Service
+            saldoAtual,
+            pendingReceipts // Recebe o valor real do Service
         );
     }
 }

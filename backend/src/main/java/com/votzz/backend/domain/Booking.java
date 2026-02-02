@@ -13,7 +13,7 @@ import java.time.LocalDate;
 public class Booking extends BaseEntity {
 
     @ManyToOne
-    @JoinColumn(name = "tenant_id", insertable = false, updatable = false)
+    @JoinColumn(name = "tenant_id")
     private Tenant tenant;
 
     @ManyToOne
@@ -24,13 +24,15 @@ public class Booking extends BaseEntity {
     @JoinColumn(name = "user_id")
     private User user;
 
-    // --- Dados do Morador (Snapshot) ---
+    // --- Dados do Morador (Snapshot para histórico) ---
     private String nome;
     private String cpf;
-    private String unidade;
-    private String bloco;
+    private String whatsapp;
     
-    // Mantido para compatibilidade
+    // No banco você tem 'unidade', 'bloco' e 'unit'. 
+    // Vamos mapear todos para garantir.
+    private String unidade; 
+    private String bloco;
     private String unit; 
 
     @Column(name = "booking_date")
@@ -42,7 +44,7 @@ public class Booking extends BaseEntity {
     @Column(name = "end_time")
     private String endTime;
     
-    private String status; // PENDING, UNDER_ANALYSIS, APPROVED, REJECTED, CANCELLED
+    private String status; // PENDING, APPROVED, ETC.
 
     @Column(name = "total_price")
     private BigDecimal totalPrice;
@@ -51,9 +53,8 @@ public class Booking extends BaseEntity {
     private String asaasPaymentId;
     
     @Column(name = "billing_type")
-    private String billingType; // PIX, BOLETO
+    private String billingType; 
 
-    // --- NOVO CAMPO: URL do Comprovante ---
     @Column(name = "receipt_url")
     private String receiptUrl; 
 

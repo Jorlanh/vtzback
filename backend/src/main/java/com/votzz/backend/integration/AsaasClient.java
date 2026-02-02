@@ -42,16 +42,26 @@ public class AsaasClient {
 
     // --- MÉTODOS ---
 
-    public String createCustomer(String name, String cpfCnpj, String email, String mobilePhone) {
+    public String createCustomer(String name, String cpfCnpj, String email, String phoneRaw) {
         String cleanCpf = cpfCnpj != null ? cpfCnpj.replaceAll("\\D", "") : "";
+        
         Map<String, String> body = new HashMap<>();
         body.put("name", name);
         body.put("cpfCnpj", cleanCpf);
         body.put("email", email);
         
-        if (mobilePhone != null && !mobilePhone.isBlank()) {
-            body.put("mobilePhone", mobilePhone.replaceAll("\\D", ""));
+        // Lógica Híbrida (Celular vs Fixo)
+        if (phoneRaw != null && !phoneRaw.isBlank()) {
+            String cleanPhone = phoneRaw.replaceAll("\\D", "");
+            if (cleanPhone.length() > 10) { 
+                body.put("mobilePhone", cleanPhone);
+            } else {
+                body.put("phone", cleanPhone);
+            }
         }
+
+        // DEBUG: Imprime o que está sendo enviado
+        log.info("ASAAS DEBUG - Criando Cliente: URL={}/customers Payload={}", apiUrl, body);
 
         try {
             Map response = getClient().post()
@@ -62,53 +72,87 @@ public class AsaasClient {
                 .body(Map.class);
 
             if (response != null && response.containsKey("id")) {
+                log.info("ASAAS SUCESSO - Cliente criado: {}", response.get("id"));
                 return (String) response.get("id");
             }
         } catch (RestClientResponseException e) {
-            log.error("Erro API Asaas (Create Customer): Status={} Body={}", e.getStatusCode(), e.getResponseBodyAsString());
-            if (e.getResponseBodyAsString().contains("already exists")) {
-                 log.info("Cliente já existe no Asaas. Buscando ID original...");
-                 return fetchCustomerIdByCpf(cleanCpf);
+            String errorBody = e.getResponseBodyAsString();
+            log.error("ERRO API ASAAS ({}): {}", e.getStatusCode(), errorBody);
+            
+            // ESTRATÉGIA DE AUTO-RECUPERAÇÃO
+            if (e.getStatusCode().value() == 400) {
+                 log.info("Tentando recuperar cliente existente por CPF/CNPJ: {}", cleanCpf);
+                 String existingId = fetchCustomerId(cleanCpf); // Tenta por CPF
+                 
+                 // Se não achou por CPF, tenta por Email (caso o erro seja email duplicado)
+                 if (existingId == null) {
+                     log.info("Não achou por CPF. Tentando recuperar por Email: {}", email);
+                     existingId = fetchCustomerIdByEmail(email);
+                 }
+
+                 if (existingId != null) {
+                     log.info("Cliente recuperado com sucesso: {}", existingId);
+                     return existingId;
+                 }
             }
-            throw new RuntimeException("Erro Asaas ao criar cliente: " + e.getResponseBodyAsString());
+            
+            // Monta mensagem de erro amigável para o Frontend
+            String msgErro = (errorBody != null && !errorBody.isBlank()) ? errorBody : "Erro HTTP " + e.getStatusCode() + " (" + e.getStatusText() + ")";
+            throw new RuntimeException("Falha Asaas: " + msgErro);
         } catch (Exception e) {
-            log.error("Erro Genérico Asaas createCustomer: {}", e.getMessage());
-            throw new RuntimeException("Falha de conexão com Asaas");
+            log.error("Erro Genérico Asaas createCustomer: {}", e.getMessage(), e);
+            throw new RuntimeException("Falha interna de conexão com Asaas");
         }
-        throw new RuntimeException("Falha ao criar cliente Asaas (Sem ID na resposta)");
+        throw new RuntimeException("Falha desconhecida ao criar cliente Asaas (Sem ID)");
     }
 
-    private String fetchCustomerIdByCpf(String cpfCnpj) {
+    private String fetchCustomerId(String cpfCnpj) {
         try {
             Map response = getClient().get()
                 .uri(apiUrl + "/customers?cpfCnpj=" + cpfCnpj)
                 .headers(h -> h.addAll(getHeaders()))
                 .retrieve()
                 .body(Map.class);
-
-            if (response != null && response.containsKey("data")) {
-                List<Map> data = (List<Map>) response.get("data");
-                if (!data.isEmpty()) {
-                    return (String) data.get(0).get("id");
-                }
-            }
+            return extractIdFromResponse(response);
         } catch (Exception e) {
-            log.error("Erro ao buscar cliente existente: {}", e.getMessage());
+            log.warn("Falha ao buscar por CPF: {}", e.getMessage());
+            return null;
         }
-        throw new RuntimeException("Cliente existe no Asaas mas não foi possível recuperar o ID.");
     }
 
-    // --- NOVO MÉTODO: Criação de Cobrança Híbrida (Link de Pagamento) ---
+    private String fetchCustomerIdByEmail(String email) {
+        try {
+            Map response = getClient().get()
+                .uri(apiUrl + "/customers?email=" + email)
+                .headers(h -> h.addAll(getHeaders()))
+                .retrieve()
+                .body(Map.class);
+            return extractIdFromResponse(response);
+        } catch (Exception e) {
+            log.warn("Falha ao buscar por Email: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String extractIdFromResponse(Map response) {
+        if (response != null && response.containsKey("data")) {
+            List<Map> data = (List<Map>) response.get("data");
+            if (!data.isEmpty()) {
+                return (String) data.get(0).get("id");
+            }
+        }
+        return null;
+    }
+
+    // --- MÉTODOS DE COBRANÇA (MANTIDOS) ---
+
     public Map<String, Object> createSubscriptionCharge(String customerId, BigDecimal value, int maxInstallmentCount) {
         Map<String, Object> body = new HashMap<>();
         body.put("customer", customerId);
-        // "UNDEFINED" permite que o cliente escolha Pix, Boleto ou Cartão
         body.put("billingType", "UNDEFINED"); 
         body.put("value", value);
         body.put("dueDate", LocalDate.now().plusDays(2).format(DateTimeFormatter.ISO_DATE));
         body.put("description", "Assinatura Votzz - Plano Custom");
-        
-        // Define o limite de parcelas
         body.put("maxInstallmentCount", maxInstallmentCount);
 
         return sendPaymentRequest(body);
@@ -185,11 +229,9 @@ public class AsaasClient {
                 result.put("paymentId", payment.get("id"));
                 result.put("value", body.get("value"));
                 
-                // Se for UNDEFINED (Link de Pagamento)
                 if (payment.containsKey("invoiceUrl")) {
                     result.put("invoiceUrl", payment.get("invoiceUrl"));
                 }
-                // Se for PIX direto
                 else if ("PIX".equals(body.get("billingType"))) {
                      try {
                          Map qrCode = getClient().get()
@@ -208,7 +250,7 @@ public class AsaasClient {
             }
         } catch (RestClientResponseException e) {
             log.error("Erro Pagamento Asaas: {}", e.getResponseBodyAsString());
-            throw new RuntimeException("Erro Asaas: " + e.getResponseBodyAsString());
+            throw new RuntimeException("Erro Asaas Pagamento: " + e.getResponseBodyAsString());
         }
         throw new RuntimeException("Erro interno ao gerar cobrança.");
     }

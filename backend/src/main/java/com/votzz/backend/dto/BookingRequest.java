@@ -1,17 +1,18 @@
 package com.votzz.backend.dto;
 
-import java.time.LocalDate;
-
 public record BookingRequest(
     String areaId,
     String userId,
-    String unit,
-    LocalDate date,
-    String startTime,
+    String date,       // Recebe como String (ex: "2026-02-10")
+    String startTime,  // Recebe como String (ex: "10:00")
     String endTime,
     
-    // --- PAGAMENTO (Apenas PIX ou BOLETO agora) ---
-    String billingType // Esperado: "PIX" ou "BOLETO"
-) {
-    // CreditCardDTO removido pois não processamos mais cartão
-}
+    // Campos do Morador (Snapshot)
+    String unit,       // Unidade/Apt
+    String block,      // Bloco
+    String nome,       // Nome Responsável
+    String cpf,
+    String whatsapp,
+    
+    String billingType // "PIX" ou "FREE"
+) {}

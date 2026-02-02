@@ -109,10 +109,21 @@ public class GovernanceService {
         List<Map<String, Object>> timeline = new ArrayList<>();
         List<Map<String, Object>> calendar = new ArrayList<>();
 
-        activePolls.forEach(p -> timeline.add(item("POLL", "Nova Enquete: " + p.getTitle(), p.getCreatedAt(), "Síndico")));
-        activeAnn.forEach(a -> timeline.add(item("COMMUNICATION", "Comunicado: " + a.getTitle(), a.getCreatedAt(), "Administração")));
-        assemblies.forEach(a -> timeline.add(item("ASSEMBLY", "Assembleia: " + a.getTitulo(), a.getCreatedAt(), "Síndico")));
+        activePolls.forEach(p -> timeline.add(item("POLL", "Nova Enquete: " + p.getTitle(), p.getCreatedAt(), "Síndico", null)));
+        activeAnn.forEach(a -> timeline.add(item("COMMUNICATION", "Comunicado: " + a.getTitle(), a.getCreatedAt(), "Administração", null)));
+        assemblies.forEach(a -> timeline.add(item("ASSEMBLY", "Assembleia: " + a.getTitulo(), a.getCreatedAt(), "Síndico", null)));
         
+        // CORREÇÃO CRÍTICA: Adicionando STATUS no item da timeline para filtro no frontend
+        bookings.stream().filter(b -> !"CANCELLED".equals(b.getStatus())).forEach(b -> {
+            // Adiciona na timeline
+            timeline.add(item("BOOKING", "Reserva: " + b.getCommonArea().getName(), b.getCreatedAt(), b.getNome(), b.getStatus()));
+            
+            // Adiciona no calendário
+            Map<String, Object> calItem = calendarItem(b.getBookingDate(), "Reserva: " + b.getCommonArea().getName(), "BOOKING", b.getId().toString());
+            calItem.put("status", b.getStatus()); // <--- CAMPO ESSENCIAL PARA O FILTRO FUNCIONAR
+            calendar.add(calItem);
+        });
+
         timeline.sort((a, b) -> {
             LocalDateTime dateA = (LocalDateTime) a.get("date");
             LocalDateTime dateB = (LocalDateTime) b.get("date");
@@ -121,9 +132,6 @@ public class GovernanceService {
             return dateB.compareTo(dateA);
         });
 
-        bookings.stream().filter(b -> !"CANCELLED".equals(b.getStatus())).forEach(b -> 
-            calendar.add(calendarItem(b.getBookingDate(), "Reserva: " + b.getCommonArea().getName(), "BOOKING", b.getId().toString()))
-        );
         activePolls.stream().filter(p -> p.getEndDate() != null).forEach(p -> 
             calendar.add(calendarItem(p.getEndDate().toLocalDate(), "Fim Enquete: " + p.getTitle(), "POLL", p.getId().toString()))
         );
@@ -136,7 +144,7 @@ public class GovernanceService {
                 "totalActions", timeline.size(),
                 "participationRate", (int) participationRate
             ),
-            "timeline", timeline.stream().limit(20).collect(Collectors.toList()),
+            "timeline", timeline.stream().limit(50).collect(Collectors.toList()), // Aumentei o limite
             "calendar", calendar,
             "polls", Map.of("active", activePolls, "archived", archivedPolls),
             "announcements", Map.of("active", activeAnn, "archived", archivedAnn)
@@ -427,11 +435,24 @@ public class GovernanceService {
         } catch (Exception e) { System.err.println("Erro email: " + e.getMessage()); }
     }
 
-    private Map<String, Object> item(String type, String desc, LocalDateTime date, String user) {
-        return Map.of("type", type, "description", desc, "date", date != null ? date : LocalDateTime.now(), "user", user != null ? user : "Sistema");
+    // CORREÇÃO: Adicionado 'status' no helper item
+    private Map<String, Object> item(String type, String desc, LocalDateTime date, String user, String status) {
+        Map<String, Object> map = new HashMap<>();
+        map.put("type", type);
+        map.put("description", desc);
+        map.put("date", date != null ? date : LocalDateTime.now());
+        map.put("user", user != null ? user : "Sistema");
+        if (status != null) map.put("status", status); // Adiciona status se existir
+        return map;
     }
     
     private Map<String, Object> calendarItem(LocalDate date, String title, String type, String id) {
-        return Map.of("id", id, "date", date, "title", title, "type", type);
+        // Usa HashMap para permitir edição
+        Map<String, Object> map = new HashMap<>();
+        map.put("id", id);
+        map.put("date", date);
+        map.put("title", title);
+        map.put("type", type);
+        return map;
     }
 }
