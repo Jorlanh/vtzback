@@ -24,8 +24,8 @@ public class UploadController {
 
             System.out.println("Recebendo upload: " + file.getOriginalFilename()); // Log para debug
 
-            // CORRIGIDO: Passando a pasta "assemblies"
-            String fileUrl = fileStorageService.uploadFile(file, "assemblies");
+            // Chama o método do FileStorageService
+            String fileUrl = fileStorageService.uploadFile(file);
 
             return ResponseEntity.ok(Map.of("url", fileUrl));
             

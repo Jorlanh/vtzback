@@ -33,29 +33,29 @@ public class FileStorageService {
 
     @PostConstruct
     public void init() {
+        // Inicializa o cliente S3 manualmente para evitar conflito de Beans
         this.s3Client = S3Client.builder()
                 .region(Region.of(region))
                 .credentialsProvider(StaticCredentialsProvider.create(AwsBasicCredentials.create(accessKey, secretKey)))
                 .build();
     }
 
-    // ATUALIZADO: Aceita o nome da pasta (ex: "areas" ou "comprovantes")
-    public String uploadFile(MultipartFile file, String folderName) throws IOException {
-        // Garante que não haja barra duplicada
-        String cleanFolder = folderName.endsWith("/") ? folderName : folderName + "/";
-        
-        // Gera nome único: pasta/uuid_nomeoriginal.ext
-        String fileName = cleanFolder + UUID.randomUUID() + "_" + file.getOriginalFilename().replaceAll("\\s+", "_");
+    public String uploadFile(MultipartFile file) throws IOException {
+        // Gera nome único
+        String fileName = "areas/" + UUID.randomUUID() + "_" + file.getOriginalFilename().replaceAll("\\s+", "_");
 
+        // Configura o envio (SEM ACL, pois o bucket é Owner Enforced)
         PutObjectRequest putOb = PutObjectRequest.builder()
                 .bucket(bucketName)
                 .key(fileName)
                 .contentType(file.getContentType())
+                // .acl("public-read") <-- REMOVIDO: Isso causava erro 400/500 na AWS moderna
                 .build();
 
+        // Envia
         s3Client.putObject(putOb, RequestBody.fromInputStream(file.getInputStream(), file.getSize()));
 
-        // Retorna URL
+        // Retorna URL Pública
         return String.format("https://%s.s3.%s.amazonaws.com/%s", bucketName, region, fileName);
     }
 }

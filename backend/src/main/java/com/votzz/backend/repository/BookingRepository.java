@@ -1,23 +1,21 @@
 package com.votzz.backend.repository;
 
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.util.List;
-import java.util.UUID;
-
+import com.votzz.backend.domain.Booking;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
 
-import com.votzz.backend.domain.Booking;
+import java.time.LocalDate;
+import java.util.List;
+import java.util.UUID;
 
 @Repository
 public interface BookingRepository extends JpaRepository<Booking, UUID> {
 
-    // Busca reservas ativas para bloquear o dia.
-    // ATUALIZADO: Adicionado 'EXPIRED' na lista de ignorados para liberar a data se o tempo acabar.
-    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status NOT IN ('CANCELLED', 'REJECTED', 'CANCELED', 'EXPIRED')")
+    // Busca reservas ativas (PENDING, APPROVED, CONFIRMED) para bloquear o dia inteiro
+    // Se houver QUALQUER reserva não cancelada/rejeitada neste dia para esta área, retorna na lista.
+    @Query("SELECT b FROM Booking b WHERE b.commonArea.id = :areaId AND b.bookingDate = :date AND b.status NOT IN ('CANCELLED', 'REJECTED', 'CANCELED')")
     List<Booking> findActiveBookingsByAreaAndDate(@Param("areaId") UUID areaId, @Param("date") LocalDate date);
 
     // Lista todas as reservas do condomínio (para o síndico)
@@ -29,12 +27,4 @@ public interface BookingRepository extends JpaRepository<Booking, UUID> {
     
     // Busca pelo ID do pagamento do Asaas (para o Webhook)
     Booking findByAsaasPaymentId(String asaasPaymentId);
-
-    // Busca reservas PENDENTES antigas para expirar automaticamente
-    List<Booking> findAllByStatusAndCreatedAtBefore(String status, LocalDateTime dateTime);
-
-    // --- CORREÇÃO DO ERRO ---
-    // O nome do método deve corresponder ao campo na entidade (asaasPaymentId)
-    boolean existsByAsaasPaymentId(String asaasPaymentId);
-
 }

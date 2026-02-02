@@ -5,12 +5,10 @@ import com.votzz.backend.domain.enums.Role;
 import com.votzz.backend.integration.AsaasClient;
 import com.votzz.backend.repository.*;
 import com.votzz.backend.service.AuditService; 
-import com.votzz.backend.service.FacilitiesService;
 import com.votzz.backend.service.FileStorageService; 
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
-import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
@@ -36,9 +34,6 @@ public class FacilitiesController {
     private final AsaasClient asaasClient;
     private final AuditService auditService; 
     private final FileStorageService fileStorageService; 
-    
-    // Injetamos o Service para delegar a lógica complexa de criação Híbrida
-    private final FacilitiesService facilitiesService; 
 
     @GetMapping("/areas")
     public List<CommonArea> getAreas() {
@@ -53,8 +48,7 @@ public class FacilitiesController {
         if (file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "Arquivo vazio."));
         
         try {
-            // CORRIGIDO: Passando "areas" como pasta
-            String fileUrl = fileStorageService.uploadFile(file, "areas");
+            String fileUrl = fileStorageService.uploadFile(file);
             return ResponseEntity.ok(Map.of("url", fileUrl));
         } catch (Exception e) {
             e.printStackTrace();
@@ -78,8 +72,8 @@ public class FacilitiesController {
 
             if (file.isEmpty()) return ResponseEntity.badRequest().body(Map.of("error", "Arquivo inválido."));
 
-            // CORRIGIDO: Passando "receipts" como pasta
-            String fileUrl = fileStorageService.uploadFile(file, "receipts");
+            // 1. Salva o arquivo (S3, Cloudinary ou Local)
+            String fileUrl = fileStorageService.uploadFile(file);
             
             // 2. Atualiza a reserva
             booking.setReceiptUrl(fileUrl);
@@ -177,24 +171,83 @@ public class FacilitiesController {
         return allBookings;
     }
 
-    // --- ENDPOINT PRINCIPAL DE CRIAÇÃO (AGORA DELEGA PARA O SERVICE HÍBRIDO) ---
     @PostMapping("/bookings")
     @Transactional
     public ResponseEntity<?> createBooking(@RequestBody BookingRequest request) {
         User user = getFreshUser(); 
-        
-        try {
-            // Chamada ao Service que contém a lógica de:
-            // 1. Validação de horário (30min rule)
-            // 2. Escolha entre Asaas (Chave Condomínio) ou Pix Manual
-            Map<String, Object> result = facilitiesService.createBooking(request, user);
-            
-            return ResponseEntity.ok(result);
-            
-        } catch (RuntimeException e) {
-            // Retorna erro 400 com a mensagem de validação (ex: horário ocupado)
-            return ResponseEntity.badRequest().body(Map.of("message", e.getMessage()));
+        Tenant tenant = user.getTenant();
+
+        CommonArea area = areaRepository.findById(UUID.fromString(request.areaId()))
+                .orElseThrow(() -> new RuntimeException("Área não encontrada"));
+
+        LocalDate dataReserva = LocalDate.parse(request.date());
+        if (dataReserva.isBefore(LocalDate.now())) {
+            return ResponseEntity.badRequest().body("Não é possível reservar datas passadas.");
         }
+
+        LocalTime inicio = LocalTime.parse(request.startTime());
+        LocalTime fim = LocalTime.parse(request.endTime());
+        
+        if (inicio.isAfter(fim)) return ResponseEntity.badRequest().body("Hora de início deve ser antes do fim.");
+
+        // --- BLOQUEIO DE DATA ---
+        // Verifica se JÁ EXISTE alguma reserva ativa (PENDING, APPROVED, UNDER_ANALYSIS) para este dia
+        List<Booking> conflitos = bookingRepository.findActiveBookingsByAreaAndDate(area.getId(), dataReserva);
+        
+        if (!conflitos.isEmpty()) {
+            return ResponseEntity.badRequest().body("DATA INDISPONÍVEL: Já existe uma reserva em andamento para este dia.");
+        }
+        // -------------------------
+
+        String cobrancaId = null;
+        BigDecimal preco = area.getPrice();
+        
+        if (preco != null && preco.compareTo(BigDecimal.ZERO) > 0) {
+            try {
+                cobrancaId = asaasClient.criarCobrancaSplit(
+                    tenant.getAsaasCustomerId(), preco, tenant.getAsaasWalletId(), BigDecimal.ZERO, request.billingType()
+                );
+            } catch (Exception e) {
+                return ResponseEntity.badRequest().body("Erro financeiro: " + e.getMessage());
+            }
+        }
+
+        // Atualiza dados cadastrais
+        if (request.cpf() != null) user.setCpf(request.cpf());
+        if (request.bloco() != null) user.setBloco(request.bloco());
+        if (request.unidade() != null) user.setUnidade(request.unidade());
+        userRepository.save(user);
+
+        Booking booking = new Booking();
+        booking.setTenant(tenant);
+        booking.setCommonArea(area);
+        booking.setUser(user);
+        booking.setNome(request.nome());
+        booking.setCpf(request.cpf());
+        booking.setBloco(request.bloco());
+        booking.setUnidade(request.unidade());
+        booking.setUnit(request.unidade()); 
+        booking.setBookingDate(dataReserva);
+        booking.setStartTime(request.startTime());
+        booking.setEndTime(request.endTime());
+        booking.setTotalPrice(preco);
+        booking.setAsaasPaymentId(cobrancaId);
+        booking.setBillingType(request.billingType());
+        
+        boolean isFree = preco == null || preco.compareTo(BigDecimal.ZERO) == 0;
+        booking.setStatus(isFree ? "APPROVED" : "PENDING"); // Cria como PENDING para bloquear a data
+
+        bookingRepository.save(booking);
+
+        auditService.log(
+            user,
+            tenant,
+            "CRIAR_RESERVA",
+            "Reservou " + area.getName() + " para " + dataReserva + " (" + request.startTime() + " - " + request.endTime() + ")",
+            "RESERVAS"
+        );
+
+        return ResponseEntity.ok(Map.of("message", "Reserva criada!", "bookingId", booking.getId()));
     }
 
     @PatchMapping("/bookings/{id}/status")
@@ -217,38 +270,6 @@ public class FacilitiesController {
 
             return ResponseEntity.ok(saved);
         }).orElse(ResponseEntity.notFound().build());
-    }
-
-    // --- NOVO ENDPOINT: VALIDAÇÃO MANUAL PELO SÍNDICO ---
-    @PatchMapping("/bookings/{id}/validate")
-    @Transactional
-    public ResponseEntity<?> validateBooking(@PathVariable UUID id, @RequestBody Map<String, Boolean> payload) {
-        User user = getFreshUser();
-        
-        // Apenas Síndico pode validar
-        if (user.getRole() != Role.SINDICO && user.getRole() != Role.ADM_CONDO) {
-            return ResponseEntity.status(403).body("Apenas síndicos podem validar reservas.");
-        }
-
-        boolean isValid = payload.get("valid");
-        Booking booking = bookingRepository.findById(id)
-                .orElseThrow(() -> new RuntimeException("Reserva não encontrada"));
-        
-        String oldStatus = booking.getStatus();
-        String newStatus = isValid ? "CONFIRMED" : "REJECTED";
-        
-        booking.setStatus(newStatus);
-        bookingRepository.save(booking);
-        
-        auditService.log(
-            user, 
-            booking.getTenant(), 
-            "VALIDAR_RESERVA", 
-            "Síndico " + (isValid ? "APROVOU" : "REJEITOU") + " a reserva #" + booking.getId(), 
-            "RESERVAS"
-        );
-        
-        return ResponseEntity.ok().build();
     }
 
     private User getUser() {
