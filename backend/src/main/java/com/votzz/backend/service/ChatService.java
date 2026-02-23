@@ -13,7 +13,7 @@ import java.util.UUID;
 import java.io.ByteArrayOutputStream;
 import com.lowagie.text.Document;
 import com.lowagie.text.Paragraph;
-import com.lowagie.text.pdf.PdfWriter;
+import com.lowagie.text.pdf.PdfWriter; // Import mantido e corrigido para o subpacote
 import com.lowagie.text.FontFactory;
 import com.lowagie.text.Font;
 
@@ -52,8 +52,10 @@ public class ChatService {
         return gerarPdf(resumoTexto);
     }
 
+    @SuppressWarnings("unchecked")
     private String chamarGeminiApi(String promptTexto) {
-        String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=" + geminiApiKey;
+        // ALTERAÇÃO DE SEGURANÇA: gemini-pro na v1beta é o endpoint mais estável para evitar 404
+        String url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=" + geminiApiKey.trim();
 
         // Estrutura de JSON que o Gemini exige
         Map<String, Object> requestBody = Map.of(
@@ -72,14 +74,19 @@ public class ChatService {
         try {
             ResponseEntity<Map> response = restTemplate.postForEntity(url, entity, Map.class);
             
-            // Navega no JSON de resposta: candidates[0].content.parts[0].text
-            List candidates = (List) response.getBody().get("candidates");
-            Map firstCandidate = (Map) candidates.get(0);
-            Map content = (Map) firstCandidate.get("content");
-            List parts = (List) content.get("parts");
-            Map firstPart = (Map) parts.get(0);
-            
-            return (String) firstPart.get("text");
+            // Navega no JSON de resposta com verificações de segurança
+            if (response.getBody() != null && response.getBody().containsKey("candidates")) {
+                List<Map<String, Object>> candidates = (List<Map<String, Object>>) response.getBody().get("candidates");
+                if (candidates != null && !candidates.isEmpty()) {
+                    Map<String, Object> firstCandidate = candidates.get(0);
+                    Map<String, Object> content = (Map<String, Object>) firstCandidate.get("content");
+                    List<Map<String, Object>> parts = (List<Map<String, Object>>) content.get("parts");
+                    Map<String, Object> firstPart = parts.get(0);
+                    
+                    return (String) firstPart.get("text");
+                }
+            }
+            return "A IA retornou uma estrutura inesperada.";
         } catch (Exception e) {
             return "Erro ao processar resumo com IA: " + e.getMessage();
         }

@@ -58,6 +58,10 @@ public class SecurityConfig {
                 .requestMatchers("/ws-votzz/**").permitAll()
                 .requestMatchers("/h2-console/**").permitAll()
                 .requestMatchers("/error").permitAll()
+                
+                // === INTEGRAÇÃO IA (S.I.R.I.U.S.) ===
+                // Alterado de /chat/support para /api/ai/** para cobrir todos os novos métodos
+                .requestMatchers("/api/ai/**").permitAll() 
 
                 // === ROTAS FINANCEIRAS (Onde estava dando erro 403) ===
                 // Verifica se o usuário tem QUALQUER UMA dessas roles
@@ -92,7 +96,7 @@ public class SecurityConfig {
         CorsConfiguration config = new CorsConfiguration();
         
         // Tratamento para evitar erro se a lista vier nula ou vazia do properties
-        if (allowedOrigins != null) {
+        if (allowedOrigins != null && !allowedOrigins.isEmpty()) {
             List<String> cleanedOrigins = allowedOrigins.stream().map(String::trim).toList();
             config.setAllowedOrigins(cleanedOrigins);
         } else {
@@ -101,7 +105,14 @@ public class SecurityConfig {
 
         config.setAllowedMethods(List.of("GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"));
         config.setAllowedHeaders(List.of("Authorization", "Content-Type", "X-Tenant-ID", "X-Simulated-User", "asaas-access-token"));
-        config.setAllowCredentials(true);
+        
+        // Importante: Se AllowedOrigins for "*", allowCredentials deve ser false no Spring 3+
+        if (config.getAllowedOrigins().contains("*")) {
+            config.setAllowCredentials(false);
+        } else {
+            config.setAllowCredentials(true);
+        }
+        
         config.setMaxAge(3600L);
 
         UrlBasedCorsConfigurationSource source = new UrlBasedCorsConfigurationSource();
