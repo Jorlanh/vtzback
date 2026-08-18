@@ -1,0 +1,21 @@
+# --- GERAL ---
+.DS_Store
+node_modules/
+dist/
+target/
+.idea/
+.vscode/
+*.log
+
+# --- SEGURANÇA (O MAIS IMPORTANTE) ---
+.env
+.env.production
+.env.local
+**/application-prod.properties
+**/*.jar
+
+# --- Ignorar arquivos de build que não devem subir ---
+backend/target/
+frontend/dist/
+frontend/node_modules/
+
